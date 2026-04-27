@@ -1,0 +1,28 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# venv
+.venv/
+venv/
+
+# local ML artifacts
+model.pkl
+columns.pkl
+mlruns/
+
+# git
+.git/
+
+# tests
+tests/
+
+# logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

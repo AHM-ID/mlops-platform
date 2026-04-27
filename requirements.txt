@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pandas
+numpy
+joblib
+psycopg2-binary
+sqlalchemy
+redis
+celery
+prometheus-client
+xgboost
+mlflow==2.9.2
+optuna==3.5.0
+scikit-learn==1.3.2

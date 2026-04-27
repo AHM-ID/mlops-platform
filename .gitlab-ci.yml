@@ -1,0 +1,22 @@
+stages:
+  - test
+  - build
+  - deploy
+
+test:
+  stage: test
+  script:
+    - pip install -r requirements.txt
+    - python -m pytest
+
+build:
+  stage: build
+  script:
+    - docker build -t churn-api:latest .
+
+deploy:
+  stage: deploy
+  script:
+    - kubectl apply -f infra/k8s/
+  only:
+    - main
