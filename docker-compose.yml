@@ -1,0 +1,134 @@
+services:
+  postgres:
+    image: docker.arvancloud.ir/postgres:15
+    env_file:
+      - .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: docker.arvancloud.ir/redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  garage:
+    image: docker.arvancloud.ir/dxflrs/garage:v0.8.2
+    command: server
+    volumes:
+      - garage_data:/var/lib/garage
+    ports:
+      - "3900:3900"
+      - "3901:3901"
+
+  mlflow:
+    image: docker.arvancloud.ir/ghcr.io/mlflow/mlflow:v2.9.2
+    command: >
+      sh -c "./scripts/wait.sh postgres:5432 -- 
+             mlflow server
+             --host 0.0.0.0
+             --port 5000
+             --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+             --default-artifact-root s3://mlflow/"
+    env_file:
+      - .env
+    volumes:
+      - ./scripts:/scripts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  trainer:
+    build: .
+    command: >
+      sh -c "./scripts/wait.sh mlflow:5000 -- 
+             python trainer/train.py"
+    env_file:
+      - .env
+    volumes:
+      - ./scripts:/scripts
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+  api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: >
+      sh -c "./scripts/wait.sh redis:6379 -- 
+             celery -A worker.celery_app worker --loglevel=info"
+    env_file:
+      - .env
+    volumes:
+      - ./scripts:/scripts
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+
+  prometheus:
+    image: docker.arvancloud.ir/prom/prometheus:v2.48.0
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: docker.arvancloud.ir/grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  loki:
+    image: docker.arvancloud.ir/grafana/loki:2.9.0
+    ports:
+      - "3100:3100"
+
+  promtail:
+    image: docker.arvancloud.ir/grafana/promtail:2.9.0
+    volumes:
+      - /var/lib/containers:/var/lib/containers:ro
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:roُ
+      - ./infra/promtail-config.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  nginx:
+    image: docker.arvancloud.ir/nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - api
+      - mlflow
+
+volumes:
+  pgdata:
+  garage_data:
+  grafana_data:

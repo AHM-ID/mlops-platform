@@ -10,45 +10,50 @@ from shared.config import *
 from trainer.features import prepare
 from trainer.optimize import search
 from trainer.evaluate import metrics
+from shared.logging import setup_logging
 
-mlflow.set_tracking_uri(MLFLOW_URI)
-mlflow.set_experiment(EXPERIMENT_NAME)
+logger = setup_logging("trainer")
 
-df = pd.read_csv("data/churn.csv")
+def main():
+    logger.info("Starting training pipeline")
 
-X, y, cols = prepare(df, training=True)
+    df = pd.read_csv("data/churn.csv")
+    logger.info(f"Loaded data, shape: {df.shape}")
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
-    test_size=0.2,
-    stratify=y,
-    random_state=42
-)
+    X, y, cols = prepare(df, training=True)
+    logger.info(f"Prepared features, shape: {X.shape}")
 
-best = search(X_train, y_train)
-
-with mlflow.start_run():
-
-    model = RandomForestClassifier(
-        **best,
-        n_jobs=-1
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, stratify=y, random_state=42
     )
+    logger.info(f"Train/test split: {X_train.shape[0]}/{X_test.shape[0]}")
 
-    model.fit(X_train, y_train)
+    mlflow.set_tracking_uri(MLFLOW_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
 
-    pred = model.predict(X_test)
-    prob = model.predict_proba(X_test)[:, 1]
+    best = search(X_train, y_train)
+    logger.info(f"Best hyperparameters found: {best}")
 
-    scores = metrics(y_test, pred, prob)
+    with mlflow.start_run() as run:
+        model = RandomForestClassifier(**best, n_jobs=-1)
+        model.fit(X_train, y_train)
+        logger.info("Model training completed")
 
-    mlflow.log_params(best)
-    mlflow.log_metrics(scores)
+        pred = model.predict(X_test)
+        prob = model.predict_proba(X_test)[:, 1]
+        scores = metrics(y_test, pred, prob)
+        logger.info(f"Metrics: {scores}")
 
-    joblib.dump(cols, "columns.pkl")
-    mlflow.log_artifact("columns.pkl")
+        mlflow.log_params(best)
+        mlflow.log_metrics(scores)
 
-    mlflow.sklearn.log_model(
-        model,
-        artifact_path="model",
-        registered_model_name=MODEL_NAME
-    )
+        joblib.dump(cols, "columns.pkl")
+        mlflow.log_artifact("columns.pkl")
+
+        mlflow.sklearn.log_model(model, "model", registered_model_name=MODEL_NAME)
+        logger.info(f"Model registered as {MODEL_NAME} in MLflow")
+
+    logger.info("Training pipeline finished successfully")
+
+if __name__ == "__main__":
+    main()
