@@ -8,7 +8,7 @@ test:
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
   script:
     - \
-      pip install \
+      python -m pip install \
       --trusted-host ${PIP_TRUSTED_HOST} \
       -i ${PIP_INDEX_URL} \
       -r requirements.txt
