@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.insert(0, '/app')
+
 import pandas as pd
 import mlflow
 import mlflow.sklearn
@@ -6,7 +11,7 @@ import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 
-from shared.config import *
+from shared.config import MLFLOW_TRACKING_URI, EXPERIMENT_NAME, MODEL_NAME
 from trainer.features import prepare
 from trainer.optimize import search
 from trainer.evaluate import metrics
@@ -16,6 +21,10 @@ logger = setup_logging("trainer")
 
 def main():
     logger.info("Starting training pipeline")
+    
+    if not os.path.exists("data/churn.csv"):
+        logger.error("data/churn.csv not found!")
+        return
 
     df = pd.read_csv("data/churn.csv")
     logger.info(f"Loaded data, shape: {df.shape}")
@@ -28,7 +37,7 @@ def main():
     )
     logger.info(f"Train/test split: {X_train.shape[0]}/{X_test.shape[0]}")
 
-    mlflow.set_tracking_uri(MLFLOW_URI)
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     best = search(X_train, y_train)
@@ -52,6 +61,12 @@ def main():
 
         mlflow.sklearn.log_model(model, "model", registered_model_name=MODEL_NAME)
         logger.info(f"Model registered as {MODEL_NAME} in MLflow")
+
+        # After logging the model, promote it to Production
+        client = mlflow.tracking.MlflowClient()
+        latest_version = client.get_latest_versions(MODEL_NAME, stages=["None"])[0].version
+        client.transition_model_version_stage(MODEL_NAME, int(latest_version), "Production")
+        logger.info(f"Model version {latest_version} promoted to Production")
 
     logger.info("Training pipeline finished successfully")
 

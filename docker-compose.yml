@@ -21,29 +21,26 @@ services:
 
   garage:
     image: ${DOCKER_REGISTRY}/dxflrs/garage:v0.8.2
+    entrypoint: /garage
     command: server
     volumes:
       - garage_data:/var/lib/garage
+      - ./infra/garage.toml:/etc/garage.toml:ro,Z
     ports:
       - "3900:3900"
       - "3901:3901"
+      - "3902:3902"
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.9.2
     command: >
-      sh -c "./scripts/wait.sh postgres:5432 -- 
-             mlflow server
-             --host 0.0.0.0
-             --port 5000
-             --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-             --default-artifact-root s3://mlflow/"
+      sh -c "pip install -q --index-url https://pypi.org/simple/ psycopg2-binary && mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB} --default-artifact-root s3://mlflow/"
     env_file:
       - .env
-    volumes:
-      - ./scripts:/scripts
     depends_on:
-      postgres:
-        condition: service_healthy
+      - postgres
+      - garage
+    restart: on-failure
 
   trainer:
     build:
@@ -52,16 +49,14 @@ services:
         DOCKER_REGISTRY: ${DOCKER_REGISTRY}
         PIP_INDEX_URL: ${PIP_INDEX_URL}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST}
-    command: >
-      sh -c "./scripts/wait.sh mlflow:5000 -- 
-             python trainer/train.py"
+    command: python trainer/train.py
     env_file:
       - .env
     volumes:
-      - ./scripts:/scripts
+      - ./data:/app/data:ro,Z
     depends_on:
-      mlflow:
-        condition: service_healthy
+      - mlflow
+    restart: on-failure
 
   api:
     build:
@@ -74,8 +69,8 @@ services:
     env_file:
       - .env
     depends_on:
-      mlflow:
-        condition: service_healthy
+      - mlflow
+    restart: on-failure
 
   worker:
     build:
@@ -84,23 +79,21 @@ services:
         DOCKER_REGISTRY: ${DOCKER_REGISTRY}
         PIP_INDEX_URL: ${PIP_INDEX_URL}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST}
-    command: >
-      sh -c "./scripts/wait.sh redis:6379 -- 
-             celery -A worker.celery_app worker --loglevel=info"
+    command: celery -A worker.celery_app worker --loglevel=info
     env_file:
       - .env
     volumes:
-      - ./scripts:/scripts
+      - ./data:/app/data:ro,Z
     depends_on:
-      redis:
-        condition: service_healthy
-      mlflow:
-        condition: service_healthy
+      - redis
+      - mlflow
+    restart: on-failure
 
   prometheus:
     image: ${DOCKER_REGISTRY}/prom/prometheus:v2.48.0
+    user: root
     volumes:
-      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
     ports:
       - "9090:9090"
 
@@ -115,29 +108,47 @@ services:
 
   loki:
     image: ${DOCKER_REGISTRY}/grafana/loki:2.9.0
+    user: root
     ports:
       - "3100:3100"
-
-  promtail:
-    image: ${DOCKER_REGISTRY}/grafana/promtail:2.9.0
     volumes:
-      - /var/lib/containers:/var/lib/containers
-      - ./infra/promtail-config.yml:/etc/promtail/config.yml
-    command: -config.file=/etc/promtail/config.yml
+      - ./infra/loki-config.yml:/etc/loki/config.yml:ro,z
+      - loki_data:/loki
+    command: -config.file=/etc/loki/config.yml
+
+  fluent-bit:
+    image: fluent/fluent-bit:2.2
+    user: root
+    volumes:
+      - ./infra/fluent-bit:/fluent-bit/etc/:ro,Z
+      - fluent-bit-storage:/tmp/flb-storage
+    ports:
+      - "2020:2020"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 2020"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf
     depends_on:
       - loki
 
   nginx:
     image: ${DOCKER_REGISTRY}/nginx:alpine
+    user: root
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
-      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro,Z
     depends_on:
       - api
       - mlflow
+    restart: on-failure
 
 volumes:
   pgdata:
   garage_data:
   grafana_data:
+  loki_data:
+  fluent-bit-storage:

@@ -1,3 +1,7 @@
+import sys
+
+sys.path.insert(0, '/app')
+
 from celery import Celery
 import subprocess
 from shared.config import REDIS_URL

@@ -13,6 +13,10 @@ RUN pip install \
     -i ${PIP_INDEX_URL} \
     -r requirements.txt
 
+RUN apt-get update && apt-get install -y netcat-openbsd && rm -rf /var/lib/apt/lists/*
+
 COPY . .
+
+RUN chmod +x scripts/wait.sh
 
 CMD ["python", "trainer/train.py"]
