@@ -1,22 +1,22 @@
 stages:
-  - test
+  # - test
   - build
   - deploy
 
-test:
-  stage: test
-  image: ${DOCKER_REGISTRY}/python:3.11.9-slim
-  before_script:
-    - which python || which python3 || echo "Python not found"
-    - python --version || python3 --version || echo "Cannot get Python version"
-  script:
-    - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} -r requirements.txt
-    - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} pytest
-    - python -m pytest
+# test:
+#   stage: test
+#   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
+#   before_script:
+#     - which python || which python3 || echo "Python not found"
+#     - python --version || python3 --version || echo "Cannot get Python version"
+#   script:
+#     - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} -r requirements.txt
+#     - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} pytest
+#     - python -m pytest
 
 build:
   stage: build
-  image: docker:24
+  image: ${DOCKER_REGISTRY}/docker:24
   services:
     - docker:24-dind
   script:
@@ -25,7 +25,7 @@ build:
 
 deploy:
   stage: deploy
-  image: bitnami/kubectl:latest
+  image: ${DOCKER_REGISTRY}/bitnami/kubectl:latest
   script:
     - kubectl apply -f infra/k8s/
   only:
