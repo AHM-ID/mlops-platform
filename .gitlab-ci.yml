@@ -6,12 +6,14 @@ stages:
 test:
   stage: test
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
+  before_script:
+    - which python || which python3 || echo "Python not found"
+    - python --version || python3 --version || echo "Cannot get Python version"
   script:
-    - \
-      python -m pip install \
-      --trusted-host ${PIP_TRUSTED_HOST} \
-      -i ${PIP_INDEX_URL} \
-      -r requirements.txt
+    - python -m pip install \
+        --trusted-host ${PIP_TRUSTED_HOST} \
+        -i ${PIP_INDEX_URL} \
+        -r requirements.txt
     - python -m pytest
 
 build:
