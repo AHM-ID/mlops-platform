@@ -7,7 +7,11 @@ test:
   stage: test
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
   script:
-    - pip install -r requirements.txt
+    - \
+      pip install \
+      --trusted-host ${PIP_TRUSTED_HOST} \
+      -i ${PIP_INDEX_URL} \
+      -r requirements.txt
     - python -m pytest
 
 build:
@@ -16,6 +20,7 @@ build:
   services:
     - docker:24-dind
   script:
+    # Use docker buildkit for caching
     - docker build -t churn-api:latest .
 
 deploy:
