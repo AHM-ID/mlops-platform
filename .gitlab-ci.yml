@@ -11,6 +11,7 @@ test:
     - python --version || python3 --version || echo "Cannot get Python version"
   script:
     - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} -r requirements.txt
+    - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} pytest
     - python -m pytest
 
 build:
