@@ -34,3 +34,6 @@ data/*
 
 # Tests
 tests/*
+
+# Env
+.env
