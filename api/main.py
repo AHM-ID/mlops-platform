@@ -20,7 +20,11 @@ from shared.logging import setup_logging
 
 logger = setup_logging("api")
 
-app = FastAPI()
+app = FastAPI(
+    title="MLOps Platform – Customer Churn Prediction",
+    version="1.0.0",
+    root_path="/api"
+)
 
 REQ = Counter("prediction_requests_total", "Total prediction requests")
 
