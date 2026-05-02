@@ -24,8 +24,8 @@ services:
     entrypoint: /garage
     command: server
     volumes:
-      - garage_data:/var/lib/garage:z
-      - ./infra/garage.toml:/etc/garage.toml:ro,z
+      - garage_data:/var/lib/garage${SELINUX}
+      - ./infra/garage.toml:/etc/garage.toml:ro${SELINUX_RO}
     healthcheck:
       test: ["CMD", "/garage", "-c", "/etc/garage.toml", "status"]
       interval: 5s
@@ -43,9 +43,9 @@ services:
     entrypoint: /bin/bash
     command: /app/scripts/garage-setup.sh
     volumes:
-      - ./infra/garage.toml:/etc/garage.toml:ro,z
-      - garage_data:/var/lib/garage:z
-      - ./.env:/app/.env:Z
+      - ./infra/garage.toml:/etc/garage.toml:ro${SELINUX_RO}
+      - garage_data:/var/lib/garage${SELINUX}
+      - ./.env:/app/.env${SELINUX}
     depends_on:
       garage:
         condition: service_healthy
@@ -73,7 +73,7 @@ services:
     command: python trainer/train.py
     env_file: .env
     volumes:
-      - ./data:/app/data:ro,Z
+      - ./data:/app/data:ro${SELINUX_RO}
     depends_on:
       mlflow:
         condition: service_started
@@ -102,7 +102,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./data:/app/data:ro,Z
+      - ./data:/app/data:ro${SELINUX_RO}
     depends_on:
       - redis
       - mlflow
@@ -112,7 +112,7 @@ services:
     image: ${DOCKER_REGISTRY}/prom/prometheus:v2.48.0
     user: root
     volumes:
-      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro${SELINUX_RO}
     ports:
       - "9090:9090"
     command:
@@ -137,7 +137,7 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./infra/loki-config.yml:/etc/loki/config.yml:ro,z
+      - ./infra/loki-config.yml:/etc/loki/config.yml:ro${SELINUX_RO}
       - loki_data:/loki
     command: -config.file=/etc/loki/config.yml
 
@@ -145,7 +145,7 @@ services:
     image: fluent/fluent-bit:2.2
     user: root
     volumes:
-      - ./infra/fluent-bit:/fluent-bit/etc/:ro,Z
+      - ./infra/fluent-bit:/fluent-bit/etc/:ro${SELINUX_RO}
       - fluent-bit-storage:/tmp/flb-storage
     ports:
       - "2020:2020"
@@ -165,7 +165,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro,Z
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro${SELINUX_RO}
     depends_on:
       - api
       - mlflow
