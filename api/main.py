@@ -18,6 +18,7 @@ from api.predictor import infer
 from shared.logging import setup_logging
 from shared.validator import CustomerData
 from shared.feature_store import get_cached_features, cache_features, get_cache_stats
+from api.metrics_extended import router as metrics_router
 
 
 logger = setup_logging("api")
@@ -28,6 +29,9 @@ app = FastAPI(
     version="2.0.0",
     root_path="/api"
 )
+
+# Add metrics router
+app.include_router(metrics_router)
 
 REQ = Counter("prediction_requests_total", "Total prediction requests")
 

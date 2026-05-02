@@ -98,8 +98,3 @@ async def model_performance():
             model_version.set(data["version"])
     
     return comparison
-
-@router.get("/prometheus")
-async def prometheus_metrics():
-    """Get Prometheus format metrics"""
-    return Response(generate_latest(), media_type="text/plain")
