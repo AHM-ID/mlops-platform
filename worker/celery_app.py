@@ -11,6 +11,8 @@ logger = setup_logging("worker")
 
 app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
 
+import worker.batch_predictor
+
 @app.task(bind=True)
 def retrain(self):
     logger.info(f"Task {self.request.id} started: retraining model")

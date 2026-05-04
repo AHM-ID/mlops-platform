@@ -15,6 +15,25 @@ from shared.logging import setup_logging
 
 logger = setup_logging("batch_predictor")
 
+def infer(model, df):
+    pred = model.predict(df)[0]
+    prob = 0.5
+    
+    try:
+        if hasattr(model, 'predict_proba'):
+            prob = model.predict_proba(df)[0][1]
+        elif hasattr(model, '_model_impl') and hasattr(model._model_impl, 'predict_proba'):
+            prob = model._model_impl.predict_proba(df)[0][1]
+        elif hasattr(model, 'sk_model') and hasattr(model.sk_model, 'predict_proba'):
+            prob = model.sk_model.predict_proba(df)[0][1]
+        else:
+            prob = float(pred)
+    except Exception as e:
+        logger.warning(f"Could not get probability, using prediction as probability: {e}")
+        prob = float(pred)
+    
+    return int(pred), float(prob)
+
 class BatchPredictionTask(Task):
     _model = None
     _columns = None
@@ -37,16 +56,18 @@ class BatchPredictionTask(Task):
                 tmp_dir = tempfile.mkdtemp()
                 artifact_path = client.download_artifacts(latest.run_id, "columns.pkl", tmp_dir)
                 self._columns = joblib.load(artifact_path)
-                logger.info("Feature columns loaded for batch prediction")
+                logger.info(f"Feature columns loaded for batch prediction: {len(self._columns)} columns")
             except Exception as e:
                 logger.error(f"Failed to load columns: {e}")
-                self._columns = []
+                self._columns = None
         return self._columns
     
     def get_redis(self):
         if self._redis_client is None:
             try:
                 self._redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+                self._redis_client.ping()
+                logger.info(f"Redis connection established in worker at {REDIS_URL}")
             except Exception as e:
                 logger.warning(f"Redis connection failed: {e}")
                 self._redis_client = None
@@ -66,61 +87,86 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
     model = self.get_model()
     columns = self.get_columns()
     
-    if not columns:
-        return {"error": "Model columns not loaded", "batch_id": batch_id}
+    # بررسی صحیح columns
+    if columns is None:
+        logger.error("Columns is None - cannot proceed")
+        return {"error": "Model columns not loaded (None)", "batch_id": batch_id}
     
-    # Prepare features
-    X = prepare(df, training=False, columns=columns)
-    logger.info(f"Features prepared, shape: {X.shape}")
+    if len(columns) == 0:
+        logger.error("Columns has zero length - cannot proceed")
+        return {"error": "Model columns not loaded (empty)", "batch_id": batch_id}
     
-    # Predict
-    predictions = model.predict(X).tolist()
-    probabilities = model.predict_proba(X)[:, 1].tolist()
+    logger.info(f"Columns loaded successfully, {len(columns)} features")
     
-    # Prepare results
-    results = []
-    for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
-        results.append({
-            "index": i,
-            "prediction": int(pred),
-            "probability": float(prob),
-            "original_data": data[i] if i < len(data) else {}
-        })
-    
-    # Store results in Redis for later retrieval
-    redis_client = self.get_redis()
-    if redis_client and batch_id:
-        redis_client.setex(
-            f"batch_results:{batch_id}",
-            86400,  # 24 hours TTL
-            json.dumps({
+    try:
+        # Prepare features
+        X = prepare(df, training=False, columns=columns)
+        logger.info(f"Features prepared, shape: {X.shape}")
+        
+        # Predict using infer function for each row
+        predictions = []
+        probabilities = []
+        
+        for idx in range(len(X)):
+            row_df = X.iloc[[idx]]
+            pred, prob = infer(model, row_df)
+            predictions.append(pred)
+            probabilities.append(prob)
+        
+        logger.info(f"Predictions completed: {predictions}")
+        
+        # Prepare results
+        results = []
+        for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
+            results.append({
+                "index": i,
+                "prediction": int(pred),
+                "probability": float(prob),
+                "original_data": data[i] if i < len(data) else {}
+            })
+        
+        # Store results in Redis for later retrieval
+        redis_client = self.get_redis()
+        import datetime
+        if redis_client and batch_id:
+            result_data = {
                 "batch_id": batch_id,
                 "total": len(results),
                 "results": results,
-                "timestamp": None
-            })
-        )
-        logger.info(f"Batch results stored in Redis with key: batch_results:{batch_id}")
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            redis_client.setex(
+                f"batch_results:{batch_id}",
+                86400,  # 24 hours TTL
+                json.dumps(result_data)
+            )
+            logger.info(f"Batch results stored in Redis with key: batch_results:{batch_id}")
+        else:
+            logger.warning(f"Could not store results - redis_client: {redis_client is not None}, batch_id: {batch_id}")
+        
+        # Calculate summary statistics
+        pred_series = pd.Series(predictions)
+        summary = {
+            "batch_id": batch_id,
+            "total_records": len(results),
+            "churn_predictions": int(pred_series.sum()),
+            "no_churn_predictions": int(len(predictions) - pred_series.sum()),
+            "churn_rate": float(pred_series.mean()),
+            "average_churn_probability": float(sum(probabilities) / len(probabilities)) if probabilities else 0
+        }
+        
+        logger.info(f"Batch prediction completed: {summary}")
+        
+        return {
+            "status": "success",
+            "summary": summary,
+            "results": results if len(results) <= 100 else results[:100],
+            "total_results": len(results)
+        }
     
-    # Calculate summary statistics
-    pred_series = pd.Series(predictions)
-    summary = {
-        "batch_id": batch_id,
-        "total_records": len(results),
-        "churn_predictions": int(pred_series.sum()),
-        "no_churn_predictions": int(len(predictions) - pred_series.sum()),
-        "churn_rate": float(pred_series.mean()),
-        "average_churn_probability": float(sum(probabilities) / len(probabilities)) if probabilities else 0
-    }
-    
-    logger.info(f"Batch prediction completed: {summary}")
-    
-    return {
-        "status": "success",
-        "summary": summary,
-        "results": results if len(results) <= 100 else results[:100],  # Limit results for large batches
-        "total_results": len(results)
-    }
+    except Exception as e:
+        logger.error(f"Error during batch prediction: {e}", exc_info=True)
+        return {"error": str(e), "batch_id": batch_id}
 
 @app.task(name="get_batch_results")
 def get_batch_results(batch_id: str):

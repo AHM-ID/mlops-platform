@@ -3,7 +3,7 @@
 # Works on Linux (Podman) and Windows (Docker)
 # ============================================
 
-.PHONY: help up down down-v restart logs ps build fix clean
+.PHONY: help build-base up down down-v restart logs ps
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
@@ -14,8 +14,12 @@ else
     WAIT_CMD = timeout /t
 endif
 
+include .env
+export
+
 help:
 	@echo "Commands:"
+	@echo "  make build-base       - Build base image with proper args"
 	@echo "  make up               - Full startup"
 	@echo "  make down             - Stop all services"
 	@echo "  make down-v           - Stop all services and remove volumes"
@@ -23,18 +27,29 @@ help:
 	@echo "  make logs [SERVICE]   - Show logs (usage: make logs SERVICE=api)"
 	@echo "  make ps               - Show service status"
 
-up:
+build-base:
+	@echo "Building base image with registry args..."
+	podman build \
+		--build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY} \
+		--build-arg PIP_INDEX_URL=${PIP_INDEX_URL} \
+		--build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
+		-t mlops-platform-base:latest .
+
+up: build-base
 	@echo "Starting MLOps Platform..."
 	$(COMPOSE_CMD) up -d postgres redis garage
 	@echo "Waiting for databases..."
-	$(WAIT_CMD) 15
+	$(WAIT_CMD) 10
 	@echo "Setting up Garage..."
 	$(COMPOSE_CMD) run --rm garage-setup
+	$(COMPOSE_CMD) up -d mlflow
+	@echo "Waiting for mlflow..."
+	$(WAIT_CMD) 40
 	@echo "Training initial model..."
 	$(COMPOSE_CMD) run --rm trainer
 	$(WAIT_CMD) 5
-	@echo "Building and starting all remaining services..."
-	$(COMPOSE_CMD) up -d --build
+	@echo "Starting all remaining services..."
+	$(COMPOSE_CMD) up -d api worker prometheus grafana loki fluent-bit nginx
 	$(WAIT_CMD) 5
 	@echo "MLOps Platform is ready"
 	@echo "API docs: http://localhost:8080/api/docs"

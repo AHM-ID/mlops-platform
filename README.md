@@ -6,25 +6,7 @@ Production-grade MLOps system for customer churn prediction using FastAPI, MLflo
 
 # Architecture
 
-```
-Client → Nginx (Reverse Proxy)
-           ├── /api/*      → FastAPI (Inference)
-           ├── /mlflow/*   → MLflow (Tracking UI)
-           ├── /prometheus/* → Prometheus (Metrics)
-           └── /grafana/*  → Grafana (Dashboards)
-                             ↓
-FastAPI → MLflow Model Registry
-            ├── Metadata   → PostgreSQL
-            └── Artifacts  → Garage (S3-compatible)
-
-Redis → Celery Worker (Async Retraining)
-          ↓
-Trainer → MLflow Tracking → PostgreSQL + Garage
-
-Observability:
-  API Metrics → Prometheus → Grafana
-  App Logs → Fluent-bit → Loki → Grafana
-```
+![system architecture](./assets/pics/architecture.svg)
 
 ---
 

@@ -5,6 +5,8 @@ services:
       - .env
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -34,12 +36,7 @@ services:
       start_period: 20s
 
   garage-setup:
-    build:
-      context: .
-      args:
-        DOCKER_REGISTRY: ${DOCKER_REGISTRY}
-        PIP_INDEX_URL: ${PIP_INDEX_URL}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST}
+    image: mlops-platform-base:latest 
     entrypoint: /bin/bash
     command: /app/scripts/garage-setup.sh
     volumes:
@@ -64,12 +61,7 @@ services:
         condition: service_healthy
 
   trainer:
-    build:
-      context: .
-      args:
-        DOCKER_REGISTRY: ${DOCKER_REGISTRY}
-        PIP_INDEX_URL: ${PIP_INDEX_URL}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST}
+    image: mlops-platform-base:latest 
     command: python trainer/train.py
     env_file: .env
     volumes:
@@ -79,12 +71,7 @@ services:
         condition: service_started
 
   api:
-    build:
-      context: .
-      args:
-        DOCKER_REGISTRY: ${DOCKER_REGISTRY}
-        PIP_INDEX_URL: ${PIP_INDEX_URL}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST}
+    image: mlops-platform-base:latest 
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --root-path /api
     env_file: .env
     depends_on:
@@ -92,12 +79,7 @@ services:
     restart: on-failure
 
   worker:
-    build:
-      context: .
-      args:
-        DOCKER_REGISTRY: ${DOCKER_REGISTRY}
-        PIP_INDEX_URL: ${PIP_INDEX_URL}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST}
+    image: mlops-platform-base:latest 
     command: celery -A worker.celery_app worker --loglevel=info
     env_file:
       - .env

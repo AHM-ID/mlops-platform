@@ -20,6 +20,11 @@ from shared.validator import CustomerData
 from shared.feature_store import get_cached_features, cache_features, get_cache_stats
 from api.metrics_extended import router as metrics_router
 
+from typing import List
+from pydantic import BaseModel
+from worker.batch_predictor import batch_predict
+import uuid
+
 
 logger = setup_logging("api")
 
@@ -160,3 +165,37 @@ async def predict(payload: CustomerData):
         "probability": prob,
         "processing_time_ms": round(duration * 1000, 2)
     }
+
+class BatchCustomerData(BaseModel):
+    customers: List[CustomerData]
+
+@app.post("/predict/batch")
+async def batch_predict_endpoint(payload: BatchCustomerData):
+    """Batch prediction for multiple customers"""
+    
+    batch_id = str(uuid.uuid4())
+    data = [customer.dict() for customer in payload.customers]
+    
+    task = batch_predict.delay(data, batch_id)
+    
+    return {
+        "batch_id": batch_id,
+        "task_id": task.id,
+        "status": "processing",
+        "total_customers": len(data),
+        "check_result_endpoint": f"/predict/batch/result/{batch_id}"
+    }
+
+@app.get("/predict/batch/result/{batch_id}")
+async def get_batch_result(batch_id: str):
+    """Get batch prediction results"""
+    if redis_client is None:
+        return {"status": "redis_unavailable", "batch_id": batch_id}
+    
+    result = redis_client.get(f"batch_results:{batch_id}")
+    
+    if result:
+        import json
+        return json.loads(result)
+    else:
+        return {"status": "not_found_or_expired", "batch_id": batch_id}
