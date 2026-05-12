@@ -5,6 +5,8 @@ services:
       - .env
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - mlops-network
     ports:
       - "5432:5432"
     healthcheck:
@@ -15,6 +17,8 @@ services:
 
   redis:
     image: ${DOCKER_REGISTRY}/redis:7
+    networks:
+      - mlops-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -28,6 +32,8 @@ services:
     volumes:
       - garage_data:/var/lib/garage${SELINUX}
       - ./infra/garage.toml:/etc/garage.toml:ro${SELINUX_RO}
+    networks:
+      - mlops-network
     healthcheck:
       test: ["CMD", "/garage", "-c", "/etc/garage.toml", "status"]
       interval: 5s
@@ -43,6 +49,8 @@ services:
       - ./infra/garage.toml:/etc/garage.toml:ro${SELINUX_RO}
       - garage_data:/var/lib/garage${SELINUX}
       - ./.env:/app/.env${SELINUX}
+    networks:
+      - mlops-network
     depends_on:
       garage:
         condition: service_healthy
@@ -56,6 +64,8 @@ services:
              --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB} 
              --default-artifact-root s3://mlflow/"
     env_file: .env
+    networks:
+      - mlops-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,29 +76,38 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data:ro${SELINUX_RO}
+      - ./trainer:/app/trainer:ro${SELINUX_RO}
+      - ./shared:/app/shared:ro${SELINUX_RO}
+    networks:
+      - mlops-network
     depends_on:
       mlflow:
         condition: service_started
+      fluent-bit:
+        condition: service_started
+    restart: "no"
 
   api:
     image: mlops-platform-base:latest 
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --root-path /api
     env_file: .env
-    environment:
-      PYTHONUNBUFFERED: "1"
-      LOG_LEVEL: "INFO"
     ports:
       - "8000:8000"
     volumes:
       - ./api:/app/api:ro,${SELINUX_RO}
       - ./shared:/app/shared:ro,${SELINUX_RO}
       - prometheus_metrics:/prometheus-metrics
+    networks:
+      - mlops-network
     depends_on:
-      - mlflow
-      - postgres
-      - redis
+      mlflow:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -102,6 +121,8 @@ services:
       - .env
     volumes:
       - ./data:/app/data:ro${SELINUX_RO}
+    networks:
+      - mlops-network
     depends_on:
       - redis
       - mlflow
@@ -112,6 +133,8 @@ services:
     user: root
     volumes:
       - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro${SELINUX_RO}
+    networks:
+      - mlops-network
     ports:
       - "9090:9090"
     command:
@@ -129,6 +152,8 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true" 
     volumes:
       - grafana_data:/var/lib/grafana
+    networks:
+      - mlops-network
 
   loki:
     image: ${DOCKER_REGISTRY}/grafana/loki:2.9.0
@@ -138,6 +163,8 @@ services:
     volumes:
       - ./infra/loki-config.yml:/etc/loki/config.yml:ro${SELINUX_RO}
       - loki_data:/loki
+    networks:
+      - mlops-network
     command: -config.file=/etc/loki/config.yml
 
   fluent-bit:
@@ -146,8 +173,13 @@ services:
     volumes:
       - ./infra/fluent-bit:/fluent-bit/etc/:ro${SELINUX_RO}
       - fluent-bit-storage:/tmp/flb-storage
+    networks:
+      - mlops-network
     ports:
       - "2020:2020"
+      - "8888:8888"
+    environment:
+      - SERVICE_NAME=fluent-bit
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 2020"]
       interval: 10s
@@ -155,8 +187,7 @@ services:
       retries: 3
       start_period: 10s
     command: /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf
-    depends_on:
-      - loki
+    restart: unless-stopped
 
   nginx:
     image: ${DOCKER_REGISTRY}/nginx:alpine
@@ -165,10 +196,17 @@ services:
       - "8080:80"
     volumes:
       - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro${SELINUX_RO}
+    networks:
+      - mlops-network
     depends_on:
       - api
       - mlflow
     restart: always
+
+networks:
+  mlops-network:
+    driver: bridge
+    name: mlops-platform-network
 
 volumes:
   pgdata:

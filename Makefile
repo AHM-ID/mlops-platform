@@ -44,12 +44,16 @@ up: build-base
 	$(COMPOSE_CMD) run --rm garage-setup
 	$(COMPOSE_CMD) up -d mlflow
 	@echo "Waiting for mlflow..."
-	$(WAIT_CMD) 40
+	$(WAIT_CMD) 30
+	@echo "Starting loggers..."
+	$(COMPOSE_CMD) up -d fluent-bit loki
+	@echo "Waiting for loggers to be healthy..."
+	$(WAIT_CMD) 10
 	@echo "Training initial model..."
 	$(COMPOSE_CMD) run --rm trainer
 	$(WAIT_CMD) 5
 	@echo "Starting all remaining services..."
-	$(COMPOSE_CMD) up -d api worker prometheus grafana loki fluent-bit nginx
+	$(COMPOSE_CMD) up -d api worker prometheus grafana nginx
 	$(WAIT_CMD) 5
 	@echo "MLOps Platform is ready"
 	@echo "API docs: http://localhost:8080/api/docs"
