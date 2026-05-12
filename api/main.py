@@ -1,201 +1,143 @@
-import time
-import tempfile
+"""
+MLOps Platform API
+Main entry point with FastAPI and Swagger documentation
+"""
 
-import pandas as pd
-import joblib
-import mlflow
-import mlflow.pyfunc
-import redis
-from datetime import datetime
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import Response
-from prometheus_client import Counter, generate_latest
+from api.routers import (
+    health,
+    predictions,
+    models,
+    batch_jobs,
+    monitoring
+)
+from api.routers.retrains import router as retrain_router
+from api.routers.retrain_queue import router as retrain_queue_router
 
-from shared.config import MODEL_NAME, MLFLOW_TRACKING_URI, REDIS_URL
-from trainer.features import prepare
-from api.predictor import infer
+from api.routers.monitoring import metrics_collector
 from shared.logging import setup_logging
-from shared.validator import CustomerData
-from shared.feature_store import get_cached_features, cache_features, get_cache_stats
-from api.metrics_extended import router as metrics_router
-
-from typing import List
-from pydantic import BaseModel
-from worker.batch_predictor import batch_predict
-import uuid
-
 
 logger = setup_logging("api")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage API lifecycle"""
+    logger.info("Starting MLOps Platform API")
+    yield
+    logger.info("Shutting down MLOps Platform API")
+
+
+# Initialize FastAPI app
 app = FastAPI(
-    title="MLOps Platform – Customer Churn Prediction",
-    description="Predict whether a customer will churn based on their account information and service usage.",
-    version="2.0.0",
-    root_path="/api"
+    title="MLOps Platform API",
+    description=""" Comprehensive API for ML Model Management and Predictions """,
+    version="3.0.0",
+    docs_url="/docs", 
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
-# Add metrics router
-app.include_router(metrics_router)
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-REQ = Counter("prediction_requests_total", "Total prediction requests")
-
-# Initialize Redis for tracking
-try:
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-except:
-    redis_client = None
-
-@app.on_event("startup")
-def load_model():
-    logger.info("Loading model from MLflow")
-
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-
-    try:
-        # Load model from registry
-        app.state.model = mlflow.pyfunc.load_model(
-            f"models:/{MODEL_NAME}/Production"
-        )
-
-        # Load artifacts
-        client = mlflow.tracking.MlflowClient()
-        latest = client.get_latest_versions(MODEL_NAME, stages=["Production"])[0]
-
-        tmp_dir = tempfile.mkdtemp()
-        artifact_path = client.download_artifacts(
-            latest.run_id,
-            "columns.pkl",
-            tmp_dir
-        )
-
-        app.state.cols = joblib.load(artifact_path)
-        app.state.model_loaded = True
-
-        logger.info("Model and artifacts loaded successfully")
-
-    except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        app.state.model_loaded = False
-
+from fastapi import Request
+import time
 
 @app.middleware("http")
-async def log_requests(request: Request, call_next):
-    start = time.time()
-    response = await call_next(request)
-    duration = time.time() - start
-
-    logger.info(
-        "Request processed",
-        extra={
-            "method": request.method,
-            "path": request.url.path,
-            "status_code": response.status_code,
-            "duration_ms": round(duration * 1000, 2)
-        }
-    )
-
-    return response
-
-
-@app.get("/health")
-def health():
-    if not hasattr(app.state, "model_loaded") or not app.state.model_loaded:
-        return {"status": "model not loaded — run trainer first"}
-    return {"status": "ok"}
-
-
-@app.get("/metrics")
-def metrics():
-    return Response(generate_latest(), media_type="text/plain")
-
-
-@app.get("/metrics/cache")
-def cache_metrics():
-    """Get cache performance statistics"""
-    return get_cache_stats()
-
-
-@app.post("/predict")
-async def predict(payload: CustomerData):
-    """Predict customer churn with validation and caching"""
-    
+async def metrics_middleware(request: Request, call_next):
     start_time = time.time()
-    REQ.inc()
-    
-    # Convert to DataFrame
-    df = pd.DataFrame([payload.dict()])
-    logger.info(f"Prediction request received for tenure={payload.tenure}, contract={payload.Contract}")
-    
-    # Try to get from cache
-    cached_X = get_cached_features(df)
-    
-    if cached_X is not None:
-        logger.info("Using cached features")
-        X = cached_X
-    else:
-        # Prepare features (no caching)
-        X = prepare(df, training=False, columns=app.state.cols)
-        # Cache for future use
-        cache_features(df, X, ttl=3600)
-    
-    # Make prediction
-    pred, prob = infer(app.state.model, X)
-    
-    # Track prediction stats in Redis
-    if redis_client:
-        redis_client.incr("total_predictions")
-        current_avg = float(redis_client.get("avg_confidence") or 0)
-        total = int(redis_client.get("total_predictions") or 1)
-        new_avg = ((current_avg * (total - 1)) + prob) / total
-        redis_client.set("avg_confidence", new_avg)
+    try:
+        response = await call_next(request)
+        duration_ms = (time.time() - start_time) * 1000
         
-        # Track churn rate
-        churn_count = int(redis_client.get("churn_count") or 0)
-        if pred == 1:
-            redis_client.incr("churn_count")
-            churn_count += 1
-        redis_client.set("churn_rate", churn_count / total)
-    
-    duration = time.time() - start_time
-    logger.info(f"Prediction completed in {duration:.3f}s: prediction={pred}, probability={prob:.3f}")
-    
+        if "/metrics" not in request.url.path:
+            metrics_collector.record_request(
+                success=response.status_code < 400,
+                response_time_ms=duration_ms
+            )
+        
+        return response
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request(success=False, response_time_ms=duration_ms)
+        raise
+
+
+app.include_router(
+    health.router,
+    tags=["Health"]
+)
+
+app.include_router(
+    predictions.router,
+    prefix="/predictions",
+    tags=["Predictions"]
+)
+
+app.include_router(
+    models.router,
+    prefix="/models",
+    tags=["Model Management"]
+)
+
+app.include_router(
+    batch_jobs.router,
+    prefix="/batch",
+    tags=["Batch Processing"]
+)
+
+app.include_router(
+    monitoring.router,
+    prefix="/monitoring",
+    tags=["Monitoring & Metrics"]
+)
+
+app.include_router(
+    retrain_router,
+    tags=["Model Retraining"]
+)
+
+app.include_router(
+    retrain_queue_router,
+    tags=["Model Retraining"]
+)
+
+
+@app.get("/", tags=["Root"])
+async def root():
+    """API root endpoint with documentation links"""
     return {
-        "prediction": pred,
-        "probability": prob,
-        "processing_time_ms": round(duration * 1000, 2)
+        "message": "MLOps Platform API",
+        "version": "3.0.0",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "openapi": "/openapi.json"
     }
 
-class BatchCustomerData(BaseModel):
-    customers: List[CustomerData]
 
-@app.post("/predict/batch")
-async def batch_predict_endpoint(payload: BatchCustomerData):
-    """Batch prediction for multiple customers"""
-    
-    batch_id = str(uuid.uuid4())
-    data = [customer.dict() for customer in payload.customers]
-    
-    task = batch_predict.delay(data, batch_id)
-    
-    return {
-        "batch_id": batch_id,
-        "task_id": task.id,
-        "status": "processing",
-        "total_customers": len(data),
-        "check_result_endpoint": f"/predict/batch/result/{batch_id}"
-    }
+@app.get("/health", tags=["Health"])
+async def quick_health():
+    """Quick health check"""
+    return {"status": "healthy"}
 
-@app.get("/predict/batch/result/{batch_id}")
-async def get_batch_result(batch_id: str):
-    """Get batch prediction results"""
-    if redis_client is None:
-        return {"status": "redis_unavailable", "batch_id": batch_id}
-    
-    result = redis_client.get(f"batch_results:{batch_id}")
-    
-    if result:
-        import json
-        return json.loads(result)
-    else:
-        return {"status": "not_found_or_expired", "batch_id": batch_id}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

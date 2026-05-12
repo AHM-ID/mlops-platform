@@ -53,9 +53,9 @@ up: build-base
 	$(WAIT_CMD) 5
 	@echo "MLOps Platform is ready"
 	@echo "API docs: http://localhost:8080/api/docs"
-	@echo "Grafana: http://localhost:8080/grafana"
-	@echo "Prometheus: http://localhost:8080/prometheus"
-	@echo "Mlflow: http://localhost:8080/mlflow"
+	@echo "Grafana: http://localhost:8080/grafana/"
+	@echo "Prometheus: http://localhost:8080/prometheus/"
+	@echo "Mlflow: http://localhost:8080/mlflow/"
 
 down:
 	@echo "Stopping all services..."

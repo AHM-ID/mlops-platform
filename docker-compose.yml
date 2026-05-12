@@ -74,8 +74,25 @@ services:
     image: mlops-platform-base:latest 
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --root-path /api
     env_file: .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./api:/app/api:ro,${SELINUX_RO}
+      - ./shared:/app/shared:ro,${SELINUX_RO}
+      - prometheus_metrics:/prometheus-metrics
     depends_on:
       - mlflow
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: on-failure
 
   worker:
@@ -158,5 +175,6 @@ volumes:
   garage_data:
     name: mlops-platform_garage_data
   grafana_data:
+  prometheus_metrics:
   loki_data:
   fluent-bit-storage:

@@ -4,6 +4,12 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://admin:admin@postgres/mlops")
 
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "admin")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "admin")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "mlops")
+
 EXPERIMENT_NAME = "customer_churn"
 MODEL_NAME = "churn_model"
 

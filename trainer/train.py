@@ -1,7 +1,9 @@
-import sys
 import os
+import sys
 
-sys.path.insert(0, '/app')
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 import pandas as pd
 import mlflow
@@ -62,7 +64,6 @@ def main():
         mlflow.sklearn.log_model(model, "model", registered_model_name=MODEL_NAME)
         logger.info(f"Model registered as {MODEL_NAME} in MLflow")
 
-        # After logging the model, promote it to Production
         client = mlflow.tracking.MlflowClient()
         latest_version = client.get_latest_versions(MODEL_NAME, stages=["None"])[0].version
         client.transition_model_version_stage(MODEL_NAME, int(latest_version), "Production")

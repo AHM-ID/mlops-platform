@@ -98,10 +98,23 @@ def get_cache_stats() -> Dict[str, Any]:
         logger.error(f"Failed to get cache stats: {e}")
         return {"status": "error", "error": str(e)}
 
-def clear_cache():
-    """Clear all feature cache (for testing/debugging)"""
-    if redis_client:
-        keys = redis_client.keys("features:*")
-        if keys:
-            redis_client.delete(*keys)
-            logger.info(f"Cleared {len(keys)} cached features")
+def clear_cache(batch_size: int = 100):
+    if redis_client is None:
+        return
+    
+    try:
+        cursor = 0
+        total_deleted = 0
+        
+        while True:
+            cursor, keys = redis_client.scan(cursor, match="features:*", count=batch_size)
+            if keys:
+                redis_client.delete(*keys)
+                total_deleted += len(keys)
+            if cursor == 0:
+                break
+        
+        logger.info(f"Cleared {total_deleted} cached features in batches")
+        
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {e}")
