@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from shared.retrain_queue import RetrainQueueManager
 from shared.logging import setup_logging
+from shared.metrics import RETRAIN_QUEUE_LENGTH
 
 logger = setup_logging("retrain_queue_router")
 
@@ -16,6 +17,9 @@ async def get_retrain_queue_status():
     try:
         queue_manager = RetrainQueueManager()
         queue_length = queue_manager.get_queue_length()
+
+        # Update Prometheus gauge
+        RETRAIN_QUEUE_LENGTH.set(queue_length)
         
         return {
             "queue_length": queue_length,

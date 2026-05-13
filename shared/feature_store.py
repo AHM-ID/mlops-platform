@@ -5,6 +5,7 @@ import pandas as pd
 from typing import Optional, Dict, Any
 from shared.config import REDIS_URL
 from shared.logging import setup_logging
+from shared.metrics import CACHE_HITS, CACHE_MISSES, FEATURE_CACHE_HIT_RATE
 
 logger = setup_logging("feature_store")
 
@@ -16,6 +17,25 @@ try:
 except Exception as e:
     logger.warning(f"Redis connection failed, caching disabled: {e}")
     redis_client = None
+
+def update_cache_hit_rate():
+    """Update the Prometheus gauge with current cache hit rate"""
+    try:
+        if redis_client is None:
+            FEATURE_CACHE_HIT_RATE.set(0)
+            return
+        
+        total_hits = int(redis_client.get("cache_total_hits") or 0)
+        total_misses = int(redis_client.get("cache_total_misses") or 0)
+        
+        if total_hits + total_misses > 0:
+            hit_rate = total_hits / (total_hits + total_misses)
+        else:
+            hit_rate = 0.0
+        
+        FEATURE_CACHE_HIT_RATE.set(hit_rate)
+    except Exception as e:
+        logger.error(f"Failed to update cache hit rate: {e}")
 
 def get_feature_hash(df: pd.DataFrame) -> str:
     """Generate unique hash for input data"""
@@ -34,11 +54,17 @@ def get_cached_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         cached = redis_client.get(f"features:{feature_hash}")
         
         if cached:
+            CACHE_HITS.labels(service='api').inc()
             logger.info(f"Cache hit for features: {feature_hash[:8]}")
             cached_data = json.loads(cached)
+            redis_client.incr("cache_total_hits")
+            update_cache_hit_rate()
             return pd.DataFrame(cached_data)
         else:
+            CACHE_MISSES.labels(service='api').inc()
             logger.debug(f"Cache miss for features: {feature_hash[:8]}")
+            redis_client.incr("cache_total_misses")
+            update_cache_hit_rate()
             return None
             
     except Exception as e:

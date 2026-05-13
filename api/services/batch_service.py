@@ -1,8 +1,3 @@
-"""
-Batch Service
-Business logic for batch prediction jobs
-"""
-
 from typing import List, Dict, Optional
 import uuid
 import json
@@ -10,7 +5,7 @@ import redis
 from datetime import datetime
 
 from api.schemas import PredictionRequest
-from shared.config import REDIS_URL
+from shared.config import REDIS_URL, BATCH_EXPIRY_SECONDS
 from shared.logging import setup_logging
 from worker.celery_app import app as celery_app
 
@@ -56,7 +51,7 @@ class BatchService:
                 "error": None
             }
             
-            self.redis_client.setex(f"batch_meta:{batch_id}", 86400, json.dumps(batch_meta))
+            self.redis_client.setex(f"batch_meta:{batch_id}", BATCH_EXPIRY_SECONDS, json.dumps(batch_meta))
             logger.info(f"Batch created: {batch_id} | records: {len(data)}")
             return batch_id
         except Exception as e:

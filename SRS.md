@@ -1,7 +1,7 @@
 # پلتفرم عملیات یادگیری ماشین برای پیش‌بینی ریزش مشتری  
 # سند نیازمندی‌های نرم‌افزار
 
-**نسخه**: ۱.۱.۰  
+**نسخه**: ۱.۲.۰  
 **تاریخ**: ۱۴۰۵/۰۲/۱۲
 
 ---
@@ -12,492 +12,430 @@
 
 ---
 
-## ۱. مقدمه
+### ۱. مقدمه
+#### ۱.۱ هدف
+هدف این سند، تعیین نیازمندی‌های عملکردی و غیرعملکردی **پلتفرم عملیات یادگیری ماشین (MLOps) برای پیش‌بینی ریزش مشتری** است. این پلتفرم به تیم‌های داده و مهندسان ML امکان می‌دهد مدل‌ها را در محیطی تولیدی آموزش دهند، ردیابی کنند، مستقر کنند، پایش نمایند و بازآموزی خودکار/دستی را مدیریت کنند. تمام نیازمندی‌ها دقیقاً منطبق بر پیاده‌سازی فعلی کدنویسی‌شده بازنگری شده‌اند.
 
-### ۱.۱ هدف
+#### ۱.۲ حوزه عملکرد
+سیستم شامل زیرسیستم‌های زیر است:
+- بارگذاری، اعتبارسنجی و پیش‌پردازش داده‌های مشتریان با پشتیبانی از یک‌داغ‌گذاری و مدیریت مقادیر گمشده
+- آموزش و بهینه‌سازی فراپارامترهای مدل طبقه‌بند جنگل تصادفی با چارچوب Optuna
+- ردیابی آزمایش‌ها، ثبت مصنوعات و مدیریت رجیستری مدل با MLflow
+- کش توزیع‌شده ویژگی‌ها (Redis) با هش یکتا، انقضای پویا و حالت کاهش‌یافته (Graceful Degradation)
+- ارائه پیش‌بینی‌های بلادرنگ (تکی) و دسته‌جمعی (Batch) از طریق واسط RESTful
+- صف بازآموزی هوشمند: ذخیره خودکار پیش‌بینی‌ها در Redis، اولویت‌دهی به داده‌های جدید و مقایسه عملکرد قبل از ارتقا
+- بازآموزی غیرهمزمان و پیش‌بینی دسته‌جمعی با کارگر Celery
+- پشته کامل دیدپذیری (Prometheus، Grafana، Loki، Fluent-bit) با لاگ‌گیری ساختاریافته غیرهمزمان
+- استقرار کانتینری با مدیریت وابستگی، پروکسی معکوس Nginx و پشتیبانی همزمان از Docker/Podman
 
-هدف این سند، تعیین نیازمندی‌های عملکردی و غیرعملکردی پلتفرم عملیات یادگیری ماشین برای پیش‌بینی ریزش مشتری است. این پلتفرم به تیم‌های داده امکان می‌دهد مدل‌های یادگیری ماشین را در یک محیط تولیدی آموزش دهند، ردیابی کنند، مستقر کنند و پایش کنند.
-
-### ۱.۲ حوزه عملکرد
-
-این سیستم شامل موارد زیر است:
-
-- بارگذاری و پیش‌پردازش داده‌های مشتریان
-- آموزش و بهینه‌سازی فراپارامترهای مدل‌های طبقه‌بندی
-- ردیابی آزمایش‌ها و مدیریت مدل با چارچوب ردیابی آزمایش
-- کش ویژگی‌های پیش‌پردازش شده با استفاده از حافظه نهان توزیع‌شده
-- ارائه پیش‌بینی‌های بلادرنگ از طریق واسط برنامه‌نویسی REST
-- بازآموزی غیرهمزمان مدل با استفاده از صف پیام
-- پیش‌بینی دسته‌جمعی (batch prediction) از طریق صف وظایف توزیع‌شده
-- پشته کامل دیدپذیری (سنجه‌ها، لاگ‌ها، داشبوردها)
-- استقرار کانتینری با مدیریت سرویس‌ها
-
-### ۱.۳ تعاریف و اختصارات
-
-| واژه                          | معنی                                              |
-| ----------------------------- | ------------------------------------------------- |
-| عملیات یادگیری ماشین          | عملیات مربوط به چرخه حیات یادگیری ماشین           |
-| چارچوب ردیابی آزمایش          | پلتفرم متن‌باز برای ردیابی چرخه حیات یادگیری ماشین |
-| چارچوب بهینه‌سازی فراپارامترها | ابزار بهینه‌سازی خودکار فراپارامترهای مدل          |
-| صف وظایف توزیع‌شده             | کارگزار وظایف برای اجرای غیرهمزمان                |
-| ابزار جمع‌آوری سنجه            | جعبه‌ابزار مانیتورینگ و هشدار                      |
-| ابزار مصورسازی                | پلتفرم نمایش داشبوردها و نمودارها                 |
-| سامانه تجمیع لاگ              | ذخیره‌سازی و جستجوی لاگ‌ها                          |
-| ذخیره‌سازی سازگار با ابر       | مخزن اشیاء با واسط سازگار با سرویس‌های ابری        |
-| کش ویژگی (Feature Cache)      | حافظه نهان برای ذخیره ویژگی‌های پیش‌پردازش شده      |
+#### ۱.۳ تعاریف و اختصارات
+| واژه                     | معنی                                                         |
+| ------------------------ | ------------------------------------------------------------ |
+| MLOps                    | عملیات چرخه حیات یادگیری ماشین                               |
+| MLflow                   | پلتفرم متن‌باز ردیابی آزمایش، رجیستری مدل و ذخیره‌سازی مصنوعات |
+| Optuna                   | چارچوب بهینه‌سازی خودکار فراپارامترها با الگوریتم TPE Sampler |
+| Celery                   | کارگزار وظایف توزیع‌شده برای اجرای غیرهمزمان                  |
+| Redis                    | حافظه نهان توزیع‌شده و صف پیام (Broker)                       |
+| Prometheus               | ابزار جمع‌آوری و پرس‌وجوی سنجه‌های سری زمانی                    |
+| Grafana                  | پلتفرم مصورسازی داشبوردها و لاگ‌ها                            |
+| Loki                     | سامانه تجمیع و جستجوی لاگ‌های ساختاریافته                     |
+| Fluent-bit               | جمع‌آورنده سبک لاگ با ارسال غیرهمزمان HTTP                    |
+| Garage                   | ذخیره‌سازی اشیاء سازگار با S3 برای مصنوعات مدل                |
+| کش ویژگی (Feature Cache) | مکانیزم ذخیره‌سازی پیش‌پردازش شده بر پایه هش MD5               |
 
 ---
 
-## ۲. توصیف کلی
+### ۲. توصیف کلی
+#### ۲.۱ جایگاه محصول
+این پلتفرم یک سامانه خودایستا مبتنی بر ریزسرویس‌ها است که با Docker Compose / Podman Compose مدیریت می‌شود. داده‌های اولیه از فایل `churn.csv` بارگذاری شده و قابلیت توسعه به منابع داده خارجی یا جریان‌های بلادرنگ را دارد. تمام پیکربندی‌ها برون‌سپاری شده و سیستم برای اجرا در هر میزبان کانتینری بهینه‌سازی شده است.
 
-### ۲.۱ جایگاه محصول
-
-این پلتفرم یک سامانه خودایستا متشکل از ریزخدمات گوناگون است که با ابزار مدیریت کانتینر مدیریت می‌شوند. با فایل داده موجود یکپارچه شده و قابلیت گسترش به ذخیره‌سازی ابری را دارد.
-
-### ۲.۲ کاربران هدف
-
-- **دانشمندان داده**: آموزش مدل، اجرای آزمایش‌ها، بررسی نتایج در چارچوب ردیابی آزمایش.
-- **مهندسان یادگیری ماشین**: استقرار مدل، پایش عملکرد، آغاز بازآموزی.
-- **تیم عملیات**: مدیریت زیرساخت، بررسی داشبوردها، تنظیم هشدارها.
+#### ۲.۲ کاربران هدف
+- **دانشمندان داده:** آموزش مدل، تعریف آزمایش‌ها، بررسی سنجه‌ها و مقایسه نسخه‌ها در MLflow
+- **مهندسان ML:** استقرار مدل، مدیریت نسخه‌ها از طریق API، پایش عملکرد و شروع بازآموزی
+- **تیم عملیات (DevOps):** مدیریت زیرساخت، بررسی داشبوردهای Grafana، تنظیم هشدارها و نگهداری لاگ‌ها در Loki
+- **سیستم‌های خارجی:** از طریق API استاندارد REST برای دریافت پیش‌بینی یا ارسال داده‌های آموزشی
 
 ---
 
-## ۳. نیازمندی‌ها
+### ۳. نیازمندی‌ها
+#### ۳.۱ نیازمندی‌های عملکردی
+**دریافت و پیش‌پردازش داده**
+- سیستم باید داده‌ها را از `data/churn.csv` بارگذاری کند.
+- پیش‌پردازش شامل تبدیل عددی `TotalCharges`، حذف سطردارای مقادیر گمشده، یک‌داغ‌گذاری متغیرهای دسته‌ای و نگاشت `Churn` به `{Yes:1, No:0}` است.
+- داده‌ها با نسبت ۸۰/۲۰ و نمونه‌برداری طبقه‌بندی‌شده (`stratify=y`) به مجموعه آموزش و آزمون تقسیم می‌شوند.
 
-### ۳.۱ نیازمندی‌های عملکردی
+**کش ویژگی (Feature Cache)**
+- سیستم باید ویژگی‌های پیش‌پردازش شده را در Redis با کلید `features:{md5_hash}` ذخیره کند. هش بر اساس محتوای JSON مرتب‌شده محاسبه می‌شود.
+- زمان انقضا (TTL) پیش‌فرض ۳۶۰۰ ثانیه است و قابل پیکربندی می‌باشد.
+- در صورت وجود داده در کش، مرحله پیش‌پردازش دور زده می‌شود (Cache Hit).
+- در صورت عدم دسترسی به Redis، سیستم به حالت کاهش‌یافته (Graceful Degradation) رفته و پیش‌پردازش را محلی انجام می‌دهد.
+- آمار کش (تعداد Hit، Miss، نرخ Hit و کل Writes) از طریق نقطه‌پایان `/api/monitoring/cache/stats` قابل بازیابی است.
+- قابلیت پاک‌سازی اجباری کش از طریق `DELETE /api/monitoring/cache` فراهم شده است.
 
-#### دریافت و پیش‌پردازش داده
+**آموزش مدل و بهینه‌سازی فراپارامترها**
+- سیستم باید یک طبقه‌بند `RandomForestClassifier` را با Optuna آموزش دهد.
+- بهینه‌سازی با ۱۵ تلاش، اعتبارسنجی متقابل ۵-بخشی و معیار بیشینه‌سازی `roc_auc` انجام می‌شود.
+- فراپارامترهای جستجو: `n_estimators` (50-200)، `max_depth` (3-10)، `min_samples_split` (2-8).
+- **ویژگی جدید:** خط‌لوله `train_from_redis.py` ابتدا سعی می‌کند داده‌ها را از صف بازآموزی Redis بارگذاری کند. در صورت خالی بودن، به CSV باز می‌گردد (Fallback).
+- قبل از ارتقا به Production، سیستم به‌صورت خودکار معیارهای نسخه جدید را با نسخه فعال مقایسه می‌کند (`auc`, `accuracy`, `f1`). در صورت برتری یا برابری، ارتقا انجام می‌شود؛ در غیر این‌صورت نسخه بایگانی می‌شود.
 
-- سیستم باید بتواند داده‌های مشتریان را از یک فایل داده بخواند.
-- سیستم باید رمزگذاری ویژگی‌ها را انجام دهد، مقادیر گمشده را مدیریت کند و داده‌ها را به مجموعه آموزش و آزمون تقسیم کند.
+**ردیابی آزمایش‌ها و مدیریت مدل**
+- تمام اجراها در MLflow ثبت می‌شوند: پارامترها، سنجه‌ها، و مصنوعات (`model.pkl`, `columns.pkl`).
+- بهترین مدل در رجیستری `churn_model` ثبت و پس از آموزش موفق به مرحله `Production` ارتقا می‌یابد.
+- API مدیریت مدل (`/api/models/*`) امکان دریافت نسخه فعال، لیست همه نسخه‌ها، مقایسه عملکرد و استقرار دستی (`/deploy`) را فراهم می‌کند.
 
-#### کش ویژگی (Feature Cache)
+**واسط برنامه‌نویسی استنتاج (FastAPI)**
+- نقاط پایان اصلی:
+  - `POST /api/predictions/single`: پیش‌بینی تکی با بازگرداندن `prediction`, `probability`, `confidence`, `model_version`.
+  - `POST /api/predictions/batch`: ارسال دسته‌جمعی (تا ۱۰,۰۰۰ رکورد) و بازگرداندن `batch_id`.
+  - `GET /api/batch/{batch_id}/status`: بررسی وضعیت پردازش.
+  - `GET /api/batch/{batch_id}/results`: دریافت نتایج و خلاصه آماری.
+  - `POST /api/collect-training-data`: ذخیره دستی داده‌های آموزشی برچسب‌دار.
+  - `GET /api/health`: بررسی سلامت سرویس و اتصالات.
+  - `GET /api/monitoring/prediction-stats`: آمار بلادرنگ پیش‌بینی‌ها از Redis.
+  - `GET /api/docs`: مستندات تعاملی Swagger/OpenAPI.
+- واسط باید در راه‌اندازی، مدل Production را از MLflow بارگذاری کند.
+- قبل از هر پیش‌بینی، کش بررسی می‌شود. پس از محاسبه، ویژگی‌ها در Redis ذخیره می‌شوند.
+- **ویژگی جدید:** هر پیش‌بینی موفق به‌صورت خودکار در صف بازآموزی (`RetrainQueueManager`) ثبت می‌شود تا برای آموزش‌های آتی استفاده گردد.
 
-- سیستم باید ویژگی‌های پیش‌پردازش شده را بر اساس هش یکتای ورودی مشتری در حافظه نهان توزیع‌شده ذخیره کند.
-- سیستم باید با استفاده از الگوریتم MD5 و بر اساس محتوای JSON داده ورودی، هش یکتا تولید کند.
-- حافظه نهان باید دارای زمان انقضا (TTL) قابل تنظیم باشد که مقدار پیش‌فرض آن ۳۶۰۰ ثانیه (یک ساعت) در نظر گرفته شده است.
-- در صورت وجود داده در حافظه نهان، سیستم باید مستقیماً از ویژگی‌های ذخیره شده استفاده کند و مرحله پیش‌پردازش را تکرار نکند.
-- در صورت عدم دسترسی به سرویس حافظه نهان، سیستم باید به صورت降یافته (graceful degradation) عمل کرده و ویژگی‌ها را مستقیماً محاسبه کند.
-- سیستم باید آمار مربوط به حافظه نهان شامل تعداد درخواست‌های موفق (hit)، تعداد درخواست‌های ناموفق (miss) و نرخ اصابت (hit rate) را از طریق نقطه‌پایانی اختصاصی در دسترس قرار دهد.
-- سیستم باید قابلیت پاک کردن اجباری حافظه نهان را برای اهداف تست و رفع اشکال فراهم کند.
+**بازآموزی غیرهمزمان و پیش‌بینی دسته‌جمعی**
+- بازآموزی از طریق `POST /api/retrain` به Celery ارسال می‌شود. وضعیت از `/api/retrain/{task_id}/status` قابل پیگیری است.
+- وظیفه بازآموزی خط‌لوله کامل را اجرا کرده، مقایسه می‌کند و در صورت موفقیت، صف آموزشی Redis را پاک می‌کند.
+- پیش‌بینی دسته‌جمعی در کارگر Celery اجرا می‌شود. مدل و ستون‌ها در حافظه کارگر کش می‌شوند تا از بارگذاری مجدد جلوگیری شود.
+- نتایج پیش‌بینی دسته‌جمعی به مدت ۲۴ ساعت (۸۶۴۰۰ ثانیه) در Redis ذخیره و با `batch_id` قابل بازیابی است.
 
-#### آموزش مدل و بهینه‌سازی فراپارامترها
+**ذخیره‌سازی مصنوعات مدل**
+- مصنوعات (مدل، فایل ستون‌ها، نمودارها) در سطل `mlflow` ذخیره‌سازی Garage (S3-compatible) ذخیره می‌شوند.
+- فراداده‌ها (پارامترها، سنجه‌ها، تگ‌ها، اطلاعات اجرا) در PostgreSQL نگهداری می‌شوند.
+- اعتبارنامه‌ها صرفاً از طریق متغیرهای محیطی (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) تزریق می‌شوند.
 
-- سیستم باید یک طبقه‌بند جنگل تصادفی را با استفاده از چارچوب بهینه‌سازی فراپارامترها آموزش دهد.
-- بهینه‌سازی باید مقدار سطح زیر منحنی را روی اعتبارسنجی متقابل ۵-بخشی با حداقل ۱۵ تلاش بیشینه کند.
-- فراپارامترهای بهینه‌شونده باید شامل تعداد درخت‌ها (n_estimators)، حداکثر عمق (max_depth) و حداقل نمونه برای تقسیم (min_samples_split) باشند.
+**مانیتورینگ و دیدپذیری**
+- Prometheus سنجه‌های API (`api_requests_total`, `api_request_duration_seconds`) و فرآیند پایتون را هر ۱۵ ثانیه می‌رباید.
+- لاگ‌ها به فرمت ساختاریافته JSON تولید شده و از طریق هندلر غیرهمزمان HTTP به Fluent-bit ارسال می‌شوند. Fluent-bit آن‌ها را به Loki فوروارد می‌کند.
+- Grafana با اتصال به Prometheus و Loki، داشبوردهای عملکردی، سنجه‌های سیستم و کاوشگر لاگ را ارائه می‌دهد.
+- نقطه‌پایان `/api/monitoring/health/system` وضعیت سلامت سیستم (CPU، RAM، Disk، اتصالات) را گزارش می‌کند.
+- هر سرویس نام خود را به‌طور خودکار در تمام لاگ‌ها تزریق می‌کند (`LoggerAdapter`).
 
-#### ردیابی آزمایش‌ها و مدیریت مدل
+**پروکسی معکوس و مسیریابی**
+- Nginx درخواست‌ها را به مسیرهای زیر هدایت می‌کند: `/api/*` → API، `/mlflow/*` → MLflow، `/prometheus/*` → Prometheus، `/grafana/*` → Grafana.
+- پشتیبانی از WebSocket و هدرهای `X-Real-IP`، `X-Forwarded-For` برای عملیات صحیح زیرمسیرها.
+- قابلیت هدایت HTTP به HTTPS در محیط تولید (قابل پیکربندی).
 
-- همه اجراهای آموزشی باید در چارچوب ردیابی آزمایش ثبت شوند: پارامترها، سنجه‌ها، مصنوعات (ستون‌های ویژگی، مدل).
-- بهترین مدل باید در رجیستری مدل ثبت شود.
-- پس از آموزش، آخرین نسخه مدل باید به‌طور خودکار به مرحله تولید ارتقا یابد.
-- سیستم باید قابلیت مقایسه خودکار عملکرد بین نسخه‌های مختلف مدل را بر اساس معیار سطح زیر منحنی فراهم کند.
-- سیستم باید بتواند بهترین مدل را بر اساس معیار سطح زیر منحنی به صورت خودکار انتخاب و بارگذاری کند.
+#### ۳.۲ نیازمندی‌های غیرعملکردی
+**کارایی**
+- زمان پاسخ نقطه‌پایان پیش‌بینی تکی در بار معمولی باید کمتر از ۵۰۰ میلی‌ثانیه باشد.
+- سیستم باید حداقل ۱۰ درخواست هم‌زمان را بدون افت محسوس پردازش کند.
+- نرخ اصابت کش ویژگی در بار معمولی باید ≥ ۳۰٪ باشد.
 
-#### واسط برنامه‌نویسی استنتاج
+**دسترس‌پذیری**
+- سرویس‌های اصلی باید دسترس‌پذیری ۹۹٪ در محیط شبه‌تولیدی داشته باشند.
+- Healthcheckها (`pg_isready`, `redis-cli ping`, `curl /health`) کانتینرهای ناسالم را به‌طور خودکار راه‌اندازی مجدد می‌کنند.
 
-- سیستم باید یک واسط برنامه‌نویسی REST با مسیرهای زیر ارائه دهد:
-  - دریافت سلامت: بازگرداندن سلامت سرویس و وضعیت بارگذاری مدل.
-  - ارسال پیش‌بینی: دریافت یک شیء شامل ویژگی‌های مشتری و بازگرداندن پیش‌بینی ریزش و احتمال.
-  - دریافت سنجه‌ها: افشای سنجه‌های ابزار جمع‌آوری سنجه شامل شمارنده درخواست‌های پیش‌بینی.
-  - دریافت آمار حافظه نهان: نمایش آمار مربوط به کش ویژگی.
-  - دریافت سنجه‌های تفصیلی: نمایش مقایسه نسخه‌های مدل، آمار کش و وضعیت سرویس‌های پشتیبان.
-- واسط باید مدل تولیدی را در هنگام راه‌اندازی از چارچوب ردیابی آزمایش بارگذاری کند.
-- واسط باید مستندات تعاملی را در مسیر مستندات در دسترس قرار دهد.
-- واسط باید قبل از هر بار پیش‌پردازش، حافظه نهان را بررسی کرده و در صورت وجود، از ویژگی‌های ذخیره شده استفاده کند.
-- واسط باید پس از محاسبه ویژگی‌ها، آن‌ها را در حافظه نهان با زمان انقضای معین ذخیره کند.
+**امنیت**
+- تمام اطلاعات حساس (گذرواژه‌ها، کلیدهای S3) باید از طریق `.env` منتقل شوند. هیچ‌کدام نباید در کد سخت‌کد شوند.
+- پروکسی معکوس باید در تولید، ترافیک غیررمزنگاری شده را به TLS هدایت کند.
+- گذرواژه‌های پیش‌فرض Grafana و Garage باید از طریق متغیرهای محیطی قابل تغییر باشند.
 
-#### بازآموزی غیرهمزمان
+**نگهداشت‌پذیری**
+- سیستم باید کاملاً کانتینری باشد و با یک دستور (`make up`) مستقر شود.
+- فایل `docker-compose.yml` و `Makefile` مدیریت وابستگی، ترتیب شروع و پلتفرم‌های Docker/Podman را یکپارچه می‌کنند.
+- پیکربندی کاملاً برون‌سپاری شده از طریق `.env.example` و `.env`.
 
-- کاربران باید بتوانند با ارسال یک وظیفه به صف وظایف توزیع‌شده، بازآموزی مدل را آغاز کنند.
-- وظیفه بازآموزی باید همان خط‌لوله آموزشی را اجرا کند و در صورت موفقیت، مدل تولیدی را به‌روز کند.
-- وضعیت بازآموزی باید لاگ و قابل مشاهده باشد.
-- سیستم باید قابلیت پیش‌بینی دسته‌جمعی (batch prediction) را از طریق صف وظایف توزیع‌شده فراهم کند.
-- نتایج پیش‌بینی دسته‌جمعی باید به مدت ۲۴ ساعت در حافظه نهان توزیع‌شده ذخیره شده و با شناسه یکتا قابل بازیابی باشد.
-- وظیفه اجراکننده پیش‌بینی دسته‌جمعی باید مدل و ستون‌های ویژگی را به صورت کش شده در حافظه داخلی خود نگهداری کند تا از بارگذاری مجدد مکرر جلوگیری شود.
-
-#### ذخیره‌سازی مصنوعات مدل
-
-- مصنوعات چارچوب ردیابی آزمایش (مدل، فایل ستون‌ها) باید در یک سطل سازگار با ابر که توسط ذخیره‌سازی سازگار با ابر فراهم می‌شود، ذخیره شوند.
-- اعتبارنامه‌های ذخیره‌سازی باید از طریق متغیرهای محیطی قابل تنظیم باشند.
-- متادیتای مدل (پارامترها، سنجه‌ها، تگ‌ها) باید در پایگاه داده رابطه‌ای ذخیره شود.
-
-#### مانیتورینگ و دیدپذیری
-
-- ابزار جمع‌آوری سنجه باید سنجه‌ها را از سرویس واسط برنامه‌نویسی جمع‌آوری کند.
-- لاگ‌های برنامه (به صورت ساختاریافته با فرمت JSON) باید توسط جمع‌آورنده لاگ جمع‌آوری و در سامانه تجمیع لاگ ذخیره شوند.
-- ابزار مصورسازی باید داشبوردهایی برای سنجه‌های سیستم و مدل ارائه دهد و منابع داده آن به ابزار جمع‌آوری سنجه و سامانه تجمیع لاگ متصل باشند.
-- داشبوردهای ابزار مصورسازی باید پشت پروکسی معکوس در دسترس باشند.
-- هر سرویس باید نام خود را به طور خودکار در تمام لاگ‌های تولید شده تزریق کند.
-- سیستم باید سنجه‌های سفارشی شامل نرخ اصابت کش ویژگی، دقت مدل تولیدی و شماره نسخه مدل تولیدی را از طریق نقطه‌پایانی سنجه‌ها در دسترس قرار دهد.
-- سیستم باید آمار پیش‌بینی (تعداد کل پیش‌بینی‌ها، میانگین اطمینان، نرخ ریزش) را در حافظه نهان توزیع‌شده ذخیره و به‌روزرسانی کند.
-
-#### پروکسی معکوس و مسیریابی
-
-- پروکسی معکوس باید درخواست‌های ورودی را این‌گونه مسیریابی کند:
-  - مسیر واسط برنامه‌نویسی به سرویس واسط
-  - مسیر چارچوب ردیابی آزمایش به سرویس ردیابی
-  - مسیر ابزار جمع‌آوری سنجه به سرویس سنجه
-  - مسیر ابزار مصورسازی به سرویس مصورسازی
-- پروکسی باید سرآیندهای مناسب را تنظیم کند تا عملکرد زیرمسیرها صحیح باشد.
-- پروکسی باید از وب‌سوکت برای قابلیت‌های بی‌درنگ (real-time) ابزار مصورسازی پشتیبانی کند.
-
-### ۳.۲ نیازمندی‌های غیرعملکردی
-
-#### کارایی
-
-- زمان پاسخ نقطه‌پایانی استنتاج برای یک درخواست منفرد در بار معمولی باید کمتر از ۵۰۰ میلی‌ثانیه باشد.
-- سیستم باید حداقل ۱۰ درخواست استنتاج هم‌زمان را بدون افت کارایی پردازش کند.
-- نرخ اصابت کش ویژگی باید در بار معمولی حداقل ۳۰ درصد باشد.
-
-#### دسترس‌پذیری
-
-- سرویس‌های اصلی باید در محیط شبه‌تولیدی دسترس‌پذیری ۹۹ درصد داشته باشند.
-- بررسی‌های سلامت باید کانتینرهای ناسالم را به‌طور خودکار راه‌اندازی مجدد کنند.
-
-#### امنیت
-
-- اطلاعات حساس (گذرواژه‌های پایگاه داده، کلیدهای ذخیره‌سازی) باید از طریق متغیرهای محیطی منتقل شوند، نه به‌صورت سخت‌کدشده.
-- پروکسی معکوس باید در محیط تولید، ارتباط غیرامن را به ارتباط امن هدایت کند (نیازمند گواهی معتبر).
-- گذرواژه‌های پیش‌فرض ابزار مصورسازی و ذخیره‌سازی باید از طریق متغیرهای محیطی قابل تغییر باشند.
-
-#### نگهداشت‌پذیری
-
-- سیستم باید کاملاً کانتینری باشد و با یک دستور واحد مستقر شود.
-- تمام سرویس‌ها باید در یک فایل تنظیمات با مدیریت وابستگی مشخص تعریف شوند.
-- پیکربندی باید از طریق یک فایل محیطی برون‌سپاری شود.
-
-#### قابلیت حمل
-
-- پلتفرم باید روی هر میزبان کانتینری بدون تغییر (به‌جز پیکربندی متغیرهای محیطی) اجرا شود.
-- استقرار روی بستر ارکستراسیون کانتینر باید با اندکی تنظیمات امکان‌پذیر باشد.
+**قابلیت حمل**
+- پلتفرم باید روی هر میزبان لینوکس/ویندوز دارای کانتینر اجرا شود.
+- استقرار روی ارکستراتورها (Kubernetes، Swarm) با حداقل تغییر در فایل‌های پیکربندی امکان‌پذیر است.
 
 ---
 
-## ۴. نیازمندی‌های واسط خارجی
+### ۴. نیازمندی‌های واسط خارجی
+#### ۴.۱ واسط‌های کاربری
+- **MLflow UI:** مرور آزمایش‌ها، رجیستری مدل و مصنوعات.
+- **Grafana UI:** داشبوردهای سنجه‌ها و کاوش لاگ‌ها.
+- **Swagger UI (`/api/docs`):** تست تعاملی API و مشاهده اسکیمای OpenAPI.
+- **Prometheus UI:** پرس‌وجوی سنجه‌های سری زمانی و وضعیت هدف‌ها.
 
-### ۴.۱ واسط‌های کاربری
+#### ۴.۲ واسط‌های سخت‌افزاری
+- ندارد (کاملاً مجازی‌شده و مستقل از سخت‌افزار).
 
-- **واسط چارچوب ردیابی آزمایش**: برای مرور آزمایش‌ها.
-- **واسط ابزار مصورسازی**: برای داشبوردها.
-- **واسط مستندات تعاملی**: برای تست واسط برنامه‌نویسی.
-- **واسط ابزار جمع‌آوری سنجه**: برای پرس‌وجوهای سنجه.
-
-### ۴.۲ واسط‌های سخت‌افزاری
-
-ندارد.
-
-### ۴.۳ واسط‌های نرم‌افزاری
-
-- **پایگاه داده رابطه‌ای**: برای فراداده چارچوب ردیابی آزمایش.
-- **حافظه نهان توزیع‌شده**: برای صف وظایف توزیع‌شده و کش ویژگی.
-- **ذخیره‌سازی اشیاء سازگار با ابر**: برای مصنوعات مدل.
-- **ابزار جمع‌آوری سنجه**: برای جمع‌آوری سنجه‌های عددی.
-- **سامانه تجمیع لاگ**: برای ذخیره و جستجوی لاگ‌های ساختاریافته.
-- **جمع‌آورنده لاگ**: برای دریافت و تبدیل لاگ‌ها از سرویس‌های مختلف.
-
----
-
-## ۵. معماری سیستم
-
-نمودار کلی تعامل سرویس‌ها در مستند اصلی ارائه شده است. معماری از الگوی ریزمخدمات پیروی می‌کند:
-
-- پروکسی معکوس به‌عنوان پروکسی لبه
-- واسط برنامه‌نویسی بدون حالت برای استنتاج با قابلیت کش ویژگی
-- کارگر غیرهمزمان برای بازآموزی و پیش‌بینی دسته‌جمعی
-- سرویس‌های پشتیبان (پایگاه داده، کارگزار پیام، ذخیره‌سازی اشیاء) برای نگهداری حالت
-- پشته کامل دیدپذیری شامل جمع‌آوری سنجه، جمع‌آوری لاگ و مصورسازی
+#### ۴.۳ واسط‌های نرم‌افزاری
+| کامپوننت    | پروتکل/پورت | نقش                                            |
+| ----------- | ----------- | ---------------------------------------------- |
+| PostgreSQL  | TCP/5432    | ذخیره فراداده MLflow                           |
+| Redis       | TCP/6379    | صف Celery، کش ویژگی، آمار پیش‌بینی، صف بازآموزی |
+| Garage (S3) | TCP/3900    | ذخیره‌سازی مصنوعات مدل و فایل‌های ردیابی         |
+| Prometheus  | TCP/9090    | جمع‌آوری و پرس‌وجوی سنجه‌ها                       |
+| Loki        | TCP/3100    | ذخیره‌سازی و ایندکس لاگ‌ها                       |
+| Fluent-bit  | TCP/8888    | دریافت لاگ‌های JSON و فوروارد به Loki           |
+| Nginx       | TCP/80      | پروکسی لبه و مسیریابی درخواست‌ها                |
 
 ---
 
-## ۶. پیش‌فرض‌ها و وابستگی‌ها
-
-- مجموعه داده مشتریان در دسترس بوده و از طرحواره مورد انتظار پیروی می‌کند.
-- شبکه‌های کانتینری اجازه کشف سرویس با نام کانتینر را می‌دهند.
-- همه تصاویر کانتینر از رجیستری‌های مشخص‌شده بدون محدودیت شبکه دریافت می‌شوند.
-- کاربران دانش پایه‌ای از ابزارهای کانتینر و واسط برنامه‌نویسی REST دارند.
-- سرویس حافظه نهان توزیع‌شده باید پیش از راه‌اندازی سرویس واسط برنامه‌نویسی در دسترس باشد.
-
----
-
-## ۷. پیوست‌ها
-
-### پیوست الف: متغیرهای محیطی
-
-| متغیر                       | هدف                            |
-| --------------------------- | ------------------------------ |
-| اطلاعات اتصال پایگاه داده   | نام، کاربر و گذرواژه           |
-| اعتبارنامه‌های ذخیره‌سازی     | کلید دسترسی و عبارت مخفی       |
-| آدرس سرور ردیابی            | نشانی چارچوب ردیابی آزمایش     |
-| رشته اتصال کارگزار پیام     | نشانی صف وظایف توزیع‌شده        |
-| گذرواژه مدیر ابزار مصورسازی | رمز ورود پیش‌فرض                |
-| آینه‌های رجیستری             | تنظیمات دریافت تصاویر و بسته‌ها |
-
-### پیوست ب: جزئیات خط‌لوله آموزش
-
-۱. بارگذاری داده  
-۲. پیش‌پردازش ویژگی‌ها (یک‌داغ‌گذاری، مدیریت مقادیر گمشده)  
-۳. تقسیم داده به نسبت ۸۰ به ۲۰ با نمونه‌برداری طبقه‌بندی شده  
-۴. بهینه‌سازی فراپارامترها با چارچوب بهینه‌سازی (۱۵ تلاش، اعتبارسنجی متقابل ۵-بخشی، بیشینه‌سازی سطح زیر منحنی)  
-۵. آموزش مدل نهایی جنگل تصادفی  
-۶. ارزیابی سنجه‌ها (صحت، دقت، بازخوانی، معیار اف، سطح زیر منحنی)  
-۷. ثبت در چارچوب ردیابی آزمایش (پارامترها، سنجه‌ها، مصنوعات)  
-۸. ثبت مدل و ارتقا به مرحله تولید  
-
-### پیوست ج: جزئیات مکانیزم کش ویژگی
-
-۱. دریافت داده ورودی مشتری در قالب JSON  
-۲. تولید هش یکتا با استفاده از الگوریتم MD5 بر روی محتوای JSON مرتب‌شده  
-۳. جستجو در حافظه نهان توزیع‌شده با کلید `features:{hash}`  
-۴. در صورت وجود (اصابت): بازیابی ویژگی‌ها و صرفه‌جویی در زمان پیش‌پردازش  
-۵. در صورت عدم وجود (خطا): محاسبه ویژگی‌ها از طریق خط‌لوله پیش‌پردازش  
-۶. ذخیره ویژگی‌های محاسبه‌شده در حافظه نهان با زمان انقضای ۳۶۰۰ ثانیه  
-۷. به‌روزرسانی آمار حافظه نهان (تعداد اصابت، تعداد خطا، نرخ اصابت)  
-۸. در صورت عدم دسترسی به سرویس حافظه نهان، ادامه کار بدون کش
+### ۵. معماری سیستم
+معماری از الگوی ریزسرویس‌های کانتینری پیروی می‌کند:
+1. **لایه لبه (Edge):** Nginx به‌عنوان پروکسی معکوس، مسیریابی مبتنی بر مسیر و پشتیبانی WebSocket.
+2. **سرویس استنتاج (Stateless API):** FastAPI برای پیش‌بینی بلادرنگ، مدیریت کش ویژگی، ثبت خودکار داده‌های آموزشی و انتشار سنجه‌های Prometheus.
+3. **کارگر غیرهمزمان (Celery Worker):** اجرای بازآموزی و پیش‌بینی دسته‌جمعی با کش داخلی مدل و ستون‌ها برای کاهش تأخیر.
+4. **سرویس‌های پشتیبان (Stateful):** PostgreSQL، Redis، Garage و MLflow برای نگهداری حالت، فراداده، صف‌ها و مصنوعات.
+5. **پشته دیدپذیری:** Fluent-bit (جمع‌آوری) → Loki (ذخیره) + Prometheus (سنجه) → Grafana (مصورسازی).
+6. **ابزارهای راه‌اندازی:** `Makefile` برای مدیریت چرخه حیات، `garage-setup.sh` برای مقداردهی اولیه خودکار S3.
 
 ---
 
-## 1. Introduction
-
-### 1.1 Purpose
-
-This document specifies the functional and non-functional requirements for the MLOps Churn Prediction Platform. The platform enables data science teams to train, track, deploy, and monitor machine learning models for customer churn prediction in a production environment.
-
-### 1.2 Scope
-
-The system covers:
-
-- Loading and preprocessing customer data
-- Training and hyperparameter optimization of classification models
-- Experiment tracking and model registry using a tracking framework
-- Precomputed feature caching using distributed cache
-- Serving real-time predictions via a REST API
-- Asynchronous model retraining triggered by a message queue
-- Batch prediction through distributed task queue
-- Full observability stack (metrics, logs, dashboards)
-- Containerized deployment with service orchestration
-
-### 1.3 Definitions and Acronyms
-
-| Term          | Meaning                                     |
-| ------------- | ------------------------------------------- |
-| MLOps         | Machine Learning Operations                 |
-| MLflow        | Open-source platform for the ML lifecycle   |
-| Optuna        | Hyperparameter optimization framework       |
-| Celery        | Distributed task queue                      |
-| Prometheus    | Monitoring and alerting toolkit             |
-| Grafana       | Analytics and monitoring visualization      |
-| Loki          | Log aggregation system                      |
-| Garage        | S3-compatible object storage                |
-| Feature Cache | Distributed cache for preprocessed features |
+### ۶. پیش‌فرض‌ها و وابستگی‌ها
+- مجموعه داده `churn.csv` در مسیر `./data/` موجود و از طرحواره مورد انتظار پیروی می‌کند.
+- شبکه‌های کانتینری امکان کشف سرویس با نام کانتینر را فراهم می‌کنند.
+- تصاویر کانتینر از رجیستری‌های پیکربندی‌شده (`DOCKER_REGISTRY`, `PIP_INDEX_URL`) دریافت می‌شوند.
+- کاربران با مفاهیم کانتینر، REST API و مدیریت متغیرهای محیطی آشنایی پایه دارند.
+- سرویس Redis و Garage باید پیش از راه‌اندازی کامل API و Worker در دسترس باشند (مدیریت شده توسط `depends_on` و healthcheckها).
 
 ---
 
-## 2. Overall Description
+### ۷. پیوست‌ها
+#### پیوست الف: متغیرهای محیطی کلیدی
+| متغیر                                                  | هدف                         | مقدار پیش‌فرض/نمونه                  |
+| ------------------------------------------------------ | --------------------------- | ----------------------------------- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`    | احراز هویت دیتابیس          | `mlops`, `admin`, `admin`           |
+| `MLFLOW_S3_ENDPOINT_URL`                               | نشانی Garage S3             | `http://garage:3900`                |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`           | اعتبارنامه‌های شیء‌ذخیره      | تولید خودکار توسط `garage-setup.sh` |
+| `MLFLOW_TRACKING_URI`                                  | نشانی سرور ردیابی           | `http://mlflow:5000`                |
+| `REDIS_URL`                                            | نشانی صف و کش               | `redis://redis:6379/0`              |
+| `GRAFANA_ADMIN_PASSWORD`                               | رمز ورود داشبورد            | قابل تغییر در `.env`                |
+| `DOCKER_REGISTRY`, `PIP_INDEX_URL`, `PIP_TRUSTED_HOST` | آینه‌های دریافت تصویر و بسته | تنظیم شده برای شبکه داخلی/خارجی     |
 
-### 2.1 Product Perspective
+#### پیوست ب: جزئیات خط‌لوله آموزش
+1. بارگذاری داده از Redis (صف بازآموزی) یا بازگشت به `churn.csv` در صورت خالی بودن صف.
+2. پیش‌پردازش ویژگی‌ها (یک‌داغ‌گذاری، مدیریت مقادیر گمشده، نگاشت هدف).
+3. تقسیم داده به نسبت ۸۰ به ۲۰ با نمونه‌برداری طبقه‌بندی‌شده.
+4. بهینه‌سازی فراپارامترها با Optuna (۱۵ تلاش، اعتبارسنجی متقابل ۵-بخشی، بیشینه‌سازی ROC-AUC).
+5. آموزش مدل نهایی جنگل تصادفی با بهترین پارامترها.
+6. ارزیابی سنجه‌ها (صحت، دقت، بازخوانی، F1، سطح زیر منحنی).
+7. ثبت در MLflow (پارامترها، سنجه‌ها، مصنوعات شامل مدل و `columns.pkl`).
+8. **مقایسه خودکار** با نسخه Production فعلی بر اساس معیارهای کلیدی.
+9. ثبت مدل در رجیستری و ارتقا به مرحله Production در صورت برتری/برابری.
+10. پاک‌سازی خودکار صف بازآموزی پس از موفقیت.
 
-The platform is a self-contained system composed of multiple microservices orchestrated via container management tools. It integrates with existing data sources and can be extended to cloud storage.
+#### پیوست ج: جزئیات مکانیزم کش ویژگی
+1. دریافت داده ورودی مشتری در قالب JSON.
+2. تولید هش یکتا با الگوریتم MD5 بر روی محتوای JSON مرتب‌شده ستون‌ها.
+3. جستجو در Redis با کلید `features:{hash}`.
+4. در صورت وجود (Hit): بازیابی آرایه ویژگی‌ها و صرفه‌جویی در زمان پیش‌پردازش.
+5. در صورت عدم وجود (Miss): محاسبه ویژگی‌ها از طریق خط‌لوله `prepare()`.
+6. ذخیره ویژگی‌های محاسبه‌شده در Redis با `SETEX` و TTL پیش‌فرض ۳۶۰۰ ثانیه.
+7. به‌روزرسانی آمار کش (`cache_total_hits`, `cache_total_misses`, `cache_total_writes`).
+8. در صورت عدم دسترسی به سرویس کش، ادامه عملیات بدون خطا و محاسبه محلی (Graceful Degradation).
+9. پشتیبانی از پاک‌سازی دسته‌ای کش از طریق API برای اهداف تست و دیباگ.
+  
+---
 
-### 2.2 User Characteristics
+### 1. Introduction
+#### 1.1 Purpose
+This document specifies the functional and non-functional requirements for the **MLOps Churn Prediction Platform**. The platform enables data science and ML engineering teams to train, track, deploy, monitor, and manage automated retraining of machine learning models in a production-grade environment. All requirements are strictly aligned with the current implemented codebase.
 
-- **Data Scientists**: Train models, run experiments, review results in the tracking framework.
-- **ML Engineers**: Deploy models, monitor performance, trigger retraining.
-- **Operations**: Manage infrastructure, review dashboards, set alerts.
+#### 1.2 Scope
+The system encompasses the following subsystems:
+- Data ingestion, validation, and preprocessing with one-hot encoding and missing value management
+- Training and hyperparameter optimization of a Random Forest classifier using Optuna
+- Experiment tracking, artifact logging, and model registry management via MLflow
+- Distributed feature caching (Redis) with MD5 hashing, dynamic TTL, and graceful degradation
+- Real-time (single) and batch prediction serving via a RESTful API (FastAPI)
+- Intelligent retraining queue: automatic prediction logging to Redis, priority-based batch extraction, and pre-deployment model performance comparison
+- Asynchronous retraining and batch prediction via Celery workers with in-memory model/column caching
+- Full observability stack (Prometheus, Grafana, Loki, Fluent-bit) with structured asynchronous JSON logging
+- Containerized deployment with dependency management, Nginx reverse proxy, and cross-platform Docker/Podman support
+
+#### 1.3 Definitions and Acronyms
+| Term                                  | Meaning                                                                                       |
+| ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| MLOps                                 | Machine Learning Operations (lifecycle management)                                            |
+| MLflow                                | Open-source platform for experiment tracking, model registry, and artifact storage            |
+| Optuna                                | Hyperparameter optimization framework using TPE Sampler                                       |
+| Celery                                | Distributed task queue for asynchronous execution                                             |
+| Redis                                 | Distributed cache and message broker                                                          |
+| Prometheus                            | Time-series metrics collection and query engine                                               |
+| Grafana                               | Visualization platform for dashboards and log exploration                                     |
+| Loki                                  | Log aggregation and indexing system                                                           |
+| Fluent-bit                            | Lightweight log forwarder with async HTTP delivery                                            |
+| Garage                                | S3-compatible object storage for model artifacts                                              |
+| Retrain Queue (`RetrainQueueManager`) | Redis-backed pipeline for collecting prediction data and triggering incremental model updates |
 
 ---
 
-## 3. System Features and Requirements
+### 2. Overall Description
+#### 2.1 Product Perspective
+The platform is a self-contained microservice architecture orchestrated via Docker Compose / Podman Compose. Initial training data is sourced from `data/churn.csv`, with extensibility for external data streams or cloud sources. All configurations are externalized, and the system is optimized for reproducible deployment on any container host.
 
-### 3.1 Functional Requirements
-
-#### Data Ingestion and Preprocessing
-
-- The system shall read customer data from a data file.
-- It shall perform feature encoding, handle missing values, and split data into training and test sets.
-
-#### Feature Cache
-
-- The system shall store preprocessed features in a distributed cache using a unique hash derived from customer input.
-- The system shall generate a unique hash using the MD5 algorithm based on sorted JSON content of input data.
-- The cache shall have a configurable time-to-live (TTL) with default value of 3600 seconds (one hour).
-- When data exists in cache, the system shall use cached features directly without repeating the preprocessing step.
-- When the cache service is unavailable, the system shall operate in graceful degradation mode and compute features directly.
-- The system shall expose cache statistics including hit count, miss count, and hit rate through a dedicated endpoint.
-- The system shall provide cache invalidation capability for testing and debugging purposes.
-
-#### Model Training and Hyperparameter Optimization
-
-- The system shall train a Random Forest classifier using the optimization framework for hyperparameter tuning.
-- The optimization shall maximize the area under the curve over 5-fold cross-validation with at least 15 trials.
-- The tunable hyperparameters shall include n_estimators, max_depth, and min_samples_split.
-
-#### Experiment Tracking and Model Management
-
-- All training runs shall be logged to the tracking framework, recording parameters, metrics, and artifacts (feature columns, model).
-- The best model shall be registered in the model registry.
-- After training, the latest model version shall be automatically promoted to the production stage.
-- The system shall provide automatic performance comparison between different model versions based on area under the curve.
-- The system shall automatically select and load the best model based on area under the curve metric.
-
-#### Inference API
-
-- The system shall provide a REST API with the following endpoints:
-  - Health check: Return service health and model load status.
-  - Prediction: Accept a JSON object with customer features and return a churn prediction and probability.
-  - Metrics: Expose monitoring metrics including the prediction requests counter.
-  - Cache statistics: Display feature cache performance metrics.
-  - Detailed metrics: Display model version comparison, cache stats, and backend service status.
-- The API shall load the production model from the tracking framework at startup.
-- The API shall include interactive documentation accessible at the documentation path.
-- The API shall check the cache before each preprocessing step and use stored features when available.
-- The API shall store computed features in the cache with specified time-to-live after preprocessing.
-
-#### Asynchronous Retraining
-
-- Users shall be able to trigger model retraining by sending a task to the distributed task queue.
-- The retraining task shall execute the same training pipeline and update the production model on success.
-- Retraining status shall be logged and made observable.
-- The system shall provide batch prediction capability through the distributed task queue.
-- Batch prediction results shall be stored in the distributed cache for 24 hours and retrievable using a unique identifier.
-- The batch prediction task shall cache the model and feature columns in its internal memory to avoid repeated loading.
-
-#### Model Artifact Storage
-
-- Tracking framework artifacts (model, columns file) shall be stored in a cloud-compatible bucket provided by the object storage.
-- Credentials for the storage shall be configurable via environment variables.
-- Model metadata (parameters, metrics, tags) shall be stored in a relational database.
-
-#### Monitoring and Observability
-
-- The monitoring tool shall scrape metrics from the API service.
-- Application logs (structured in JSON format) shall be collected by the log collector and stored in the log aggregation system.
-- The visualization tool shall provide dashboards for system and model metrics, with data sources connected to the monitoring tool and log aggregation system.
-- The visualization dashboards shall be accessible behind the reverse proxy.
-- Each service shall automatically inject its name into all generated logs.
-- The system shall expose custom metrics including feature cache hit rate, production model accuracy, and production model version through the metrics endpoint.
-- The system shall store and update prediction statistics (total predictions, average confidence, churn rate) in the distributed cache.
-
-#### Reverse Proxy and Routing
-
-- The reverse proxy shall route incoming requests as follows:
-  - API path to the API service
-  - Tracking framework path to the tracking service
-  - Monitoring tool path to the metrics service
-  - Visualization tool path to the visualization service
-- The proxy shall set appropriate headers to ensure correct sub-path operation.
-- The proxy shall support WebSocket for real-time capabilities of the visualization tool.
-
-### 3.2 Non-Functional Requirements
-
-#### Performance
-
-- The inference endpoint shall respond within 500ms for a single request under normal load.
-- The system shall support at least 10 concurrent inference requests without degradation.
-- The feature cache hit rate shall be at least 30 percent under normal load.
-
-#### Availability
-
-- Core services shall achieve 99 percent uptime in a production-like environment (excluding maintenance).
-- Health checks shall automatically restart unhealthy containers.
-
-#### Security
-
-- Sensitive credentials (database passwords, storage keys) shall be passed via environment variables, not hardcoded.
-- The reverse proxy shall be configured to redirect unencrypted connections to encrypted connections in production (SSL certificates required).
-- Default visualization tool and storage passwords shall be changeable through environment variables.
-
-#### Maintainability
-
-- The system shall be fully containerized and deployable with a single command.
-- All services shall be defined in a single configuration file with clear dependency management.
-- Configuration shall be externalized through an environment file.
-
-#### Portability
-
-- The platform shall run on any container host without modification beyond environment configuration.
-- Deployment on container orchestration platforms shall be feasible after minor adjustments.
+#### 2.2 User Characteristics
+- **Data Scientists:** Model training, experiment definition, metric review, and version comparison via MLflow UI.
+- **ML Engineers:** Model deployment, API-driven version management, performance monitoring, and retraining orchestration.
+- **Operations / DevOps:** Infrastructure management, Grafana dashboard monitoring, alert configuration, and log analysis via Loki.
+- **External Systems:** Integration via standardized REST endpoints for real-time/batch predictions and training data submission.
 
 ---
 
-## 4. External Interface Requirements
+### 3. System Features and Requirements
+#### 3.1 Functional Requirements
+**Data Ingestion and Preprocessing**
+- The system shall load data from `data/churn.csv`.
+- Preprocessing includes numeric conversion of `TotalCharges`, dropping rows with missing values, one-hot encoding categorical variables, and mapping `Churn` to `{Yes:1, No:0}`.
+- Data is split 80/20 with stratified sampling (`stratify=y`) into training and test sets.
 
-### 4.1 User Interfaces
+**Feature Cache**
+- The system shall store preprocessed features in Redis using the key format `features:{md5_hash}`. The hash is computed from sorted JSON input content.
+- Default Time-To-Live (TTL) is 3600 seconds and is configurable.
+- On cache hit, the preprocessing step is bypassed.
+- On Redis unavailability, the system operates in graceful degradation mode and computes features locally.
+- Cache statistics (hits, misses, hit rate, total writes) are exposed via `/api/monitoring/cache/stats`.
+- Forced cache invalidation is available via `DELETE /api/monitoring/cache`.
 
-- **Tracking Framework UI**: Accessible for experiment browsing.
-- **Visualization Tool UI**: Accessible for dashboards.
-- **Interactive Documentation UI**: Accessible for API testing.
-- **Monitoring Tool UI**: Accessible for metric queries.
+**Model Training and Hyperparameter Optimization**
+- The system shall train a `RandomForestClassifier` using Optuna.
+- Optimization runs 15 trials with 5-fold cross-validation, maximizing `roc_auc`.
+- Tunable hyperparameters: `n_estimators` (50–200), `max_depth` (3–10), `min_samples_split` (2–8).
+- **New Feature:** The `train_from_redis.py` pipeline first attempts to load training data from the Redis retrain queue. If empty, it falls back to the original CSV.
+- Before promotion to Production, the system automatically compares new model metrics (`auc`, `accuracy`, `f1`) against the active Production version. Promotion occurs only if the new model performs equal or better; otherwise, it is archived.
 
-### 4.2 Hardware Interfaces
+**Experiment Tracking and Model Management**
+- All runs are logged to MLflow: parameters, metrics, and artifacts (`model.pkl`, `columns.pkl`).
+- The best model is registered in the `churn_model` registry.
+- The API provides endpoints for retrieving the active model, listing all versions, comparing performance, and manual deployment (`/api/models/deploy`).
 
-None.
+**Inference API (FastAPI)**
+- Core endpoints:
+  - `POST /api/predictions/single`: Returns `prediction`, `probability`, `confidence`, `model_version`.
+  - `POST /api/predictions/batch`: Accepts up to 10,000 records, returns a `batch_id`.
+  - `GET /api/batch/{batch_id}/status`: Tracks job progress.
+  - `GET /api/batch/{batch_id}/results`: Retrieves results and statistical summary.
+  - `POST /api/collect-training-data`: Manually submits labeled training data.
+  - `GET /api/health`: Service and dependency health check.
+  - `GET /api/monitoring/prediction-stats`: Real-time prediction statistics from Redis.
+  - `GET /api/docs`: Interactive Swagger/OpenAPI documentation.
+- The API loads the Production model from MLflow at startup.
+- Cache is checked before each prediction; computed features are cached afterward.
+- **New Feature:** Every successful prediction is automatically logged to the `RetrainQueueManager` for future model updates.
 
-### 4.3 Software Interfaces
+**Asynchronous Retraining and Batch Prediction**
+- Retraining is triggered via `POST /api/retrain` and dispatched to Celery. Status is trackable at `/api/retrain/{task_id}/status`.
+- The retraining task executes the full pipeline, performs model comparison, and clears the training queue upon success.
+- Batch prediction runs inside a Celery worker. The model and feature columns are cached in worker memory to prevent repeated I/O.
+- Batch results are stored in Redis for 24 hours (86,400 seconds) and retrievable via `batch_id`.
 
-- **Relational Database**: For tracking framework metadata.
-- **Distributed Cache**: For task queue and feature cache.
-- **Cloud-Compatible Object Storage**: For model artifacts.
-- **Monitoring Tool**: For numeric metric collection.
-- **Log Aggregation System**: For structured log storage and query.
-- **Log Collector**: For receiving and transforming logs from various services.
+**Model Artifact Storage**
+- Artifacts (model, column mappings, plots) are stored in the `mlflow` bucket on Garage (S3-compatible).
+- Metadata (parameters, metrics, tags, run info) is persisted in PostgreSQL.
+- Credentials are injected exclusively via environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`).
+
+**Monitoring and Observability**
+- Prometheus scrapes API metrics (`api_requests_total`, `api_request_duration_seconds`) and Python process metrics every 15 seconds.
+- Application logs are generated in structured JSON format and sent asynchronously via HTTP to Fluent-bit, which forwards them to Loki.
+- Grafana provides dashboards connected to Prometheus and Loki, including log exploration.
+- `/api/monitoring/health/system` reports system health (CPU, RAM, Disk, backend connections).
+- Every service automatically injects its name into all log records via `LoggerAdapter`.
+
+**Reverse Proxy and Routing**
+- Nginx routes: `/api/*` → API, `/mlflow/*` → MLflow, `/prometheus/*` → Prometheus, `/grafana/*` → Grafana.
+- Supports WebSocket and correctly forwards `X-Real-IP`, `X-Forwarded-For`, and sub-path headers.
+- HTTP to HTTPS redirection is configurable for production environments.
+
+#### 3.2 Non-Functional Requirements
+**Performance**
+- Single prediction endpoint response time shall be < 500ms under normal load.
+- The system shall handle ≥ 10 concurrent inference requests without degradation.
+- Feature cache hit rate shall be ≥ 30% under typical load.
+
+**Availability**
+- Core services shall achieve 99% uptime in production-like environments.
+- Healthchecks (`pg_isready`, `redis-cli ping`, `curl /health`) automatically restart unhealthy containers.
+
+**Security**
+- All sensitive data (DB passwords, S3 keys) must be passed via environment variables. Hardcoding is prohibited.
+- The reverse proxy shall redirect unencrypted traffic to TLS in production.
+- Default passwords for Grafana and Garage must be customizable via `.env`.
+
+**Maintainability**
+- The system is fully containerized and deployable via a single command (`make up`).
+- `docker-compose.yml` and `Makefile` manage dependency ordering, startup sequence, and Docker/Podman compatibility.
+- Configuration is fully externalized through `.env.example` and `.env`.
+
+**Portability**
+- The platform runs on any Linux/Windows container host.
+- Deployment to orchestrators (Kubernetes, Swarm) requires minimal configuration adjustments.
 
 ---
 
-## 5. System Architecture
+### 4. External Interface Requirements
+#### 4.1 User Interfaces
+- **MLflow UI:** Experiment browsing, registry management, artifact inspection.
+- **Grafana UI:** System/model metrics dashboards and LogQL log exploration.
+- **Swagger UI (`/api/docs`):** Interactive API testing and OpenAPI schema viewing.
+- **Prometheus UI:** Time-series metric querying and target status monitoring.
 
-A high-level diagram of service interactions is provided in the main documentation. The architecture follows a microservices pattern with:
+#### 4.2 Hardware Interfaces
+- None (fully virtualized and hardware-agnostic).
 
-- Reverse proxy as an edge proxy
-- Stateless API for inference with feature caching capability
-- Asynchronous worker for retraining and batch prediction
-- Backend services (database, message broker, object storage) for state persistence
-- Full observability stack including metric collection, log collection, and visualization
+#### 4.3 Software Interfaces
+| Component   | Protocol/Port          | Role                                                          |
+| ----------- | ---------------------- | ------------------------------------------------------------- |
+| PostgreSQL  | TCP/5432               | MLflow metadata storage                                       |
+| Redis       | TCP/6379               | Celery broker, feature cache, prediction stats, retrain queue |
+| Garage (S3) | TCP/3900               | Model artifact storage                                        |
+| Prometheus  | TCP/9090               | Metric collection and querying                                |
+| Loki        | TCP/3100               | Log aggregation and indexing                                  |
+| Fluent-bit  | TCP/8888 (input)       | Async JSON log receiver → Loki forwarder                      |
+| Nginx       | TCP/80 (external 8080) | Edge reverse proxy and path-based routing                     |
 
 ---
 
-## 6. Assumptions and Dependencies
-
-- The customer dataset is available and follows the expected schema.
-- Container networks allow service discovery by container name.
-- All container images are pulled from the specified registries without network restrictions.
-- Users have basic knowledge of container tools and REST APIs.
-- The distributed cache service must be available before the API service startup for optimal performance.
+### 5. System Architecture
+The architecture follows a containerized microservices pattern:
+1. **Edge Layer:** Nginx reverse proxy for path-based routing, header forwarding, and WebSocket support.
+2. **Inference Service (Stateless):** FastAPI for real-time predictions, feature cache management, automatic training data logging, and Prometheus metric exposure.
+3. **Async Worker (Celery):** Handles retraining and batch prediction with in-memory model/column caching to minimize latency.
+4. **Stateful Backends:** PostgreSQL, Redis, Garage, and MLflow for state persistence, messaging, queues, and artifact tracking.
+5. **Observability Stack:** Fluent-bit (collection) → Loki (storage) + Prometheus (metrics) → Grafana (visualization).
+6. **Orchestration & Tooling:** `Makefile` for lifecycle management, `garage-setup.sh` for automated S3 initialization, and cross-platform Compose support.
 
 ---
 
-## 7. Appendices
+### 6. Assumptions and Dependencies
+- The `churn.csv` dataset exists at `./data/` and conforms to the expected schema.
+- Container networking enables DNS-based service discovery.
+- Container images are pulled from configured registries (`DOCKER_REGISTRY`, `PIP_INDEX_URL`).
+- Users possess foundational knowledge of containerization, REST APIs, and environment variable management.
+- Redis and Garage must be healthy before API and Worker startup (enforced via `depends_on` and healthchecks).
 
-### Appendix A: Environment Variables
+---
 
-| Variable                          | Purpose                              |
-| --------------------------------- | ------------------------------------ |
-| Database connection info          | Name, user, and password             |
-| Storage credentials               | Access key and secret phrase         |
-| Tracking server address           | Tracking framework URL               |
-| Message broker connection string  | Distributed task queue address       |
-| Visualization tool admin password | Default login password               |
-| Registry mirrors                  | Image and package retrieval settings |
+### 7. Appendices
+#### Appendix A: Key Environment Variables
+| Variable                                               | Purpose                            | Default/Sample                      |
+| ------------------------------------------------------ | ---------------------------------- | ----------------------------------- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`    | Database authentication            | `mlops`, `admin`, `admin`           |
+| `MLFLOW_S3_ENDPOINT_URL`                               | Garage S3 endpoint                 | `http://garage:3900`                |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`           | Object storage credentials         | Auto-generated by `garage-setup.sh` |
+| `MLFLOW_TRACKING_URI`                                  | Tracking server address            | `http://mlflow:5000`                |
+| `REDIS_URL`                                            | Queue and cache connection         | `redis://redis:6379/0`              |
+| `GRAFANA_ADMIN_PASSWORD`                               | Dashboard login password           | Configurable in `.env`              |
+| `DOCKER_REGISTRY`, `PIP_INDEX_URL`, `PIP_TRUSTED_HOST` | Image/package mirror configuration | Set for internal/external networks  |
 
-### Appendix B: Training Pipeline Detail
+#### Appendix B: Training Pipeline Detail
+1. Load data from Redis retrain queue (fallback to `churn.csv` if empty).
+2. Preprocess features (one-hot encoding, missing value handling, target mapping).
+3. Split data 80/20 with stratified sampling.
+4. Optimize hyperparameters via Optuna (15 trials, 5-fold CV, maximize ROC-AUC).
+5. Train final Random Forest model with best parameters.
+6. Evaluate metrics (accuracy, precision, recall, F1, AUC).
+7. Log to MLflow (parameters, metrics, artifacts including model & `columns.pkl`).
+8. **Automatic comparison** with current Production version on key metrics.
+9. Register model and promote to Production if performance is equal/better; otherwise archive.
+10. Automatically clear the Redis retrain queue upon successful promotion.
 
-1. Load data
-2. Preprocess features (one-hot encoding, missing value handling)
-3. Split data (80/20 ratio) with stratified sampling
-4. Optimize hyperparameters using optimization framework (15 trials, 5-fold cross-validation, maximize area under curve)
-5. Train final Random Forest model
-6. Evaluate metrics (accuracy, precision, recall, F1 score, area under curve)
-7. Log to tracking framework (parameters, metrics, artifacts)
-8. Register model and promote to production stage
-
-### Appendix C: Feature Cache Mechanism Detail
-
-1. Receive customer input data in JSON format
-2. Generate unique hash using MD5 algorithm on sorted JSON content
-3. Query distributed cache with key format `features:{hash}`
-4. If exists (cache hit): retrieve features and skip preprocessing
-5. If not exists (cache miss): compute features through preprocessing pipeline
-6. Store computed features in cache with 3600 seconds time-to-live
-7. Update cache statistics (hit count, miss count, hit rate)
-8. If cache service is unavailable, continue operation without caching
+#### Appendix C: Feature Cache Mechanism Detail
+1. Receive customer input data as JSON.
+2. Generate unique MD5 hash from sorted JSON column content.
+3. Query Redis with key `features:{hash}`.
+4. Cache Hit: Retrieve features, skip preprocessing.
+5. Cache Miss: Compute features via `prepare()` pipeline.
+6. Store computed features in Redis using `SETEX` with default TTL 3600s.
+7. Update cache statistics (`cache_total_hits`, `cache_total_misses`, `cache_total_writes`).
+8. Graceful degradation: Continue operation locally if Redis is unreachable.
+9. Batch cache clearing supported via API for testing/debugging.

@@ -1,83 +1,90 @@
-import logging
 import requests
+import logging
 from pythonjsonlogger import jsonlogger
-from threading import Thread
-from queue import Queue, Empty 
 import os
+import sys
 import json
 
-class AsyncHTTPHandler(logging.Handler):
+class SyncHTTPHandler(logging.Handler):
+    """Simple synchronous HTTP handler for Fluent Bit"""
+    
     def __init__(self, fluent_bit_url="http://fluent-bit:8888"):
         super().__init__()
         self.fluent_bit_url = fluent_bit_url.rstrip('/')
-        self.queue = Queue()
-        self.running = True
-        self.thread = Thread(target=self._send_logs, daemon=True)
-        self.thread.start()
-    
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+        
     def emit(self, record):
         try:
             log_entry = self.format(record)
-            
             if isinstance(log_entry, str):
                 try:
                     log_entry = json.loads(log_entry)
                 except:
-                    log_entry = {"message": log_entry, "log": log_entry}
+                    log_entry = {"message": log_entry}
             
-            log_message = json.dumps(log_entry)
-            payload = {"log": log_message}
+            service = getattr(record, 'service', 'unknown')
             
-            self.queue.put(payload)
+            payload = {
+                "log": json.dumps(log_entry),
+                "service": service,
+                "level": log_entry.get('level', 'INFO').lower(),
+                "host": os.getenv('HOSTNAME', 'unknown')
+            }
+            
+            self.session.post(f"{self.fluent_bit_url}/", json=payload, timeout=2)
+            
         except Exception as e:
-            print(f"Error in emit: {e}")
+            import sys
+            sys.stderr.write(f"HTTP logging failed: {e}\n")
     
-    def _send_logs(self):
-        session = requests.Session()
-        while self.running:
-            try:
-                payload = self.queue.get(timeout=1)
-                try:
-                    response = session.post(
-                        f"{self.fluent_bit_url}/",
-                        json=payload,
-                        timeout=0.5,
-                        headers={"Content-Type": "application/json"}
-                    )
-                    if response.status_code != 200:
-                        print(f"Fluent-bit returned {response.status_code}: {response.text}")
-                except requests.exceptions.RequestException as req_err:
-                    print(f"Request error to fluent-bit: {req_err}")
-            except Empty:
-                continue
-            except Exception as e:
-                print(f"Unexpected error in log sender: {type(e).__name__}: {e}")
+    def close(self):
+        self.session.close()
+        super().close()
 
-def setup_logging(service_name: str):
+
+def setup_logging(service_name: str, level=logging.INFO, extra=None):
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
     
-    if logger.hasHandlers():
-        logger.handlers.clear()
+    logger.handlers.clear()
     
-    console_handler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter(
-        fmt='%(asctime)s %(levelname)s %(name)s %(message)s',
-        rename_fields={'asctime': 'timestamp', 'levelname': 'level'},
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    
+    json_formatter = jsonlogger.JsonFormatter(
+        fmt='%(asctime)s %(levelname)s %(name)s %(message)s %(service)s %(request_id)s %(duration_ms)s %(customer_id)s %(prediction)s %(probability)s',
+        rename_fields={
+            'asctime': 'timestamp',
+            'levelname': 'level',
+            'name': 'logger'
+        },
         datefmt='%Y-%m-%dT%H:%M:%SZ'
     )
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(json_formatter)
     logger.addHandler(console_handler)
     
     try:
-        if os.path.exists('/.dockerenv') or os.path.exists('/run/.containerenv'):
-            import time
-            time.sleep(2) 
-            http_handler = AsyncHTTPHandler()
-            http_handler.setFormatter(formatter)
-            logger.addHandler(http_handler)
-            logger.info(f"Fluent-bit HTTP logging enabled for {service_name}")
+        from shared.config import FLUENT_BIT_URL
+        http_handler = SyncHTTPHandler(fluent_bit_url=FLUENT_BIT_URL)
+        http_handler.setLevel(level)
+        http_handler.setFormatter(json_formatter)
+        logger.addHandler(http_handler)
     except Exception as e:
-        logger.warning(f"Failed to setup Fluent-bit HTTP handler: {e}")
+        sys.stderr.write(f"HTTP logging failed: {e}\n")
     
-    return logging.LoggerAdapter(logger, {'service': service_name})
+    adapter_extra = {'service': service_name}
+    if extra:
+        adapter_extra.update(extra)
+    
+    class CustomLoggerAdapter(logging.LoggerAdapter):
+        def process(self, msg, kwargs):
+            extra = kwargs.get('extra', {})
+            merged_extra = {**self.extra, **extra}
+            kwargs['extra'] = merged_extra
+            return msg, kwargs
+    
+    adapter = CustomLoggerAdapter(logger, adapter_extra)
+    adapter.info(f"Logging initialized for {service_name}")
+    
+    return adapter
