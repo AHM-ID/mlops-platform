@@ -1,6 +1,7 @@
 import re
 import uuid
 import time
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -25,28 +26,45 @@ from shared.feature_store import update_cache_hit_rate
 
 logger = setup_logging("api")
 
+executor = ThreadPoolExecutor(max_workers=2)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting MLOps Platform API")
     start_system_metrics_collector()
     
+    # Initialize queue manager once, reuse connection
+    queue_manager = RetrainQueueManager()
+    
     async def update_queue_length():
         while True:
             try:
-                queue_manager = RetrainQueueManager()
+                start_time = time.time()
                 queue_length = await asyncio.get_event_loop().run_in_executor(
-                    None, queue_manager.get_queue_length
+                    executor, queue_manager.get_queue_length
                 )
+                elapsed = time.time() - start_time
+                logger.debug(f"Queue length query took {elapsed:.3f}s")
+                
                 RETRAIN_QUEUE_LENGTH.set(queue_length)
                 await asyncio.sleep(30)
             except Exception as e:
                 logger.error(f"Failed to update queue length: {e}")
                 await asyncio.sleep(60)
     
-    asyncio.create_task(update_queue_length())
+    queue_task = asyncio.create_task(update_queue_length())
     
     yield
+    
+    # Graceful shutdown
     logger.info("Shutting down MLOps Platform API")
+    queue_task.cancel()
+    try:
+        await queue_task
+    except asyncio.CancelledError:
+        pass
+    executor.shutdown(wait=False)
+
 
 # Initialize FastAPI app
 app = FastAPI(

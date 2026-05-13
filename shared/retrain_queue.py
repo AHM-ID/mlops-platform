@@ -3,7 +3,7 @@ import json
 import pickle
 from typing import List, Dict, Optional
 from datetime import datetime
-from shared.config import REDIS_URL, RETRAIN_BATCH_SIZE
+from shared.config import REDIS_URL, RETRAIN_BATCH_SIZE, REDIS_MAX_CONNECTIONS
 from shared.logging import setup_logging
 
 logger = setup_logging("retrain_queue")
@@ -13,12 +13,19 @@ RETRAIN_QUEUE_KEY = "retrain:training_data"
 class RetrainQueueManager:
     def __init__(self):
         try:
-            self.redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+            self.redis_client = redis.from_url(
+                REDIS_URL, 
+                decode_responses=False,
+                max_connections=REDIS_MAX_CONNECTIONS,  # Add connection pool limit
+                socket_keepalive=True,
+                socket_connect_timeout=5
+            )
             self.redis_client.ping()
             logger.info("Retrain queue manager connected to Redis")
         except Exception as e:
             logger.warning(f"Redis connection failed for retrain queue: {e}")
             self.redis_client = None
+
     
     def add_prediction(self, features: Dict, prediction: int, probability: float):
         """Automatically store prediction for future retraining"""
