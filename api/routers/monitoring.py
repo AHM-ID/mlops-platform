@@ -1,35 +1,23 @@
-"""
-Monitoring Router
-Provides metrics, health monitoring, and system observability endpoints
-"""
-
 from fastapi import APIRouter, HTTPException, status, Response
-from datetime import datetime
+from datetime import datetime, timedelta
 import psutil
+from functools import lru_cache
 import os
-from prometheus_client import (
-    Counter, Histogram, Gauge, generate_latest, 
-    CollectorRegistry, multiprocess
-)
+import time
 
-from api.schemas import (
-    APIMetrics,
-    SystemHealth,
-)
+from api.schemas import APIMetrics, SystemHealth
 from shared.logging import setup_logging
+from shared.config import UPTIME_MOCK_SECONDS
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, ProcessCollector, PlatformCollector, CollectorRegistry, multiprocess
+from shared.feature_store import update_cache_hit_rate
 
 logger = setup_logging("monitoring_router")
-
 router = APIRouter()
 
 def get_registry():
     registry = CollectorRegistry()
     multiprocess.MultiProcessCollector(registry)
     return registry
-
-REQUESTS = Counter('api_requests_total', 'Total API requests', ['method', 'endpoint', 'status'])
-REQUEST_DURATION = Histogram('api_request_duration_seconds', 'Request duration', ['method', 'endpoint'])
-ACTIVE_REQUESTS = Gauge('api_active_requests', 'Active requests')
 
 class MetricsCollector:
     def __init__(self):
@@ -52,7 +40,7 @@ class MetricsCollector:
         avg_response_time = (self.total_response_time_ms / self.total_requests 
                             if self.total_requests > 0 else 0)
         
-        uptime_seconds = 3600
+        uptime_seconds = UPTIME_MOCK_SECONDS
         rps = self.total_requests / uptime_seconds if uptime_seconds > 0 else 0
         
         return APIMetrics(
@@ -66,9 +54,27 @@ class MetricsCollector:
 
 metrics_collector = MetricsCollector()
 
+_metrics_cache = {"data": None, "timestamp": 0}
+
 @router.get("/metrics/prometheus")
 async def prometheus_metrics():
-    return Response(content=generate_latest(), media_type="text/plain")
+    now = time.time()
+    if now - _metrics_cache["timestamp"] < 5:
+        return Response(content=_metrics_cache["data"], media_type=CONTENT_TYPE_LATEST)
+    
+    try:
+        ProcessCollector()
+        PlatformCollector()
+    except Exception:
+        pass
+    
+    update_cache_hit_rate()
+    registry = get_registry()
+    metrics_data = generate_latest(registry)
+    _metrics_cache["data"] = metrics_data
+    _metrics_cache["timestamp"] = now
+    
+    return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
 
 @router.get("/metrics", response_model=APIMetrics, status_code=status.HTTP_200_OK)
 async def get_metrics() -> APIMetrics:

@@ -3,13 +3,12 @@ import json
 import pickle
 from typing import List, Dict, Optional
 from datetime import datetime
-from shared.config import REDIS_URL
+from shared.config import REDIS_URL, RETRAIN_BATCH_SIZE
 from shared.logging import setup_logging
 
 logger = setup_logging("retrain_queue")
 
 RETRAIN_QUEUE_KEY = "retrain:training_data"
-RETRAIN_BATCH_SIZE = 1000
 
 class RetrainQueueManager:
     def __init__(self):
@@ -29,7 +28,7 @@ class RetrainQueueManager:
         try:
             record = {
                 "features": features,
-                "label": None,                    # will be filled later with ground truth
+                "label": None,
                 "prediction": prediction,
                 "probability": probability,
                 "timestamp": datetime.now().isoformat(),
@@ -41,6 +40,25 @@ class RetrainQueueManager:
             return True
         except Exception as e:
             logger.error(f"Failed to log prediction: {e}")
+            return False
+        
+    def add_training_record(self, features: Dict, label: int) -> bool:
+        if self.redis_client is None:
+            return False
+        
+        try:
+            record = {
+                "features": features,
+                "label": label,
+                "timestamp": datetime.now().isoformat(),
+                "source": "manual_collection"
+            }
+            serialized = pickle.dumps(record)
+            self.redis_client.rpush(RETRAIN_QUEUE_KEY, serialized)
+            logger.info(f"Training record added to retrain queue | label={label}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add training record: {e}")
             return False
     
     def get_training_batch(self, batch_size: int = RETRAIN_BATCH_SIZE) -> List[Dict]:

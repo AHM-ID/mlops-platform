@@ -18,6 +18,7 @@ from api.schemas import (
 from api.services.prediction_service import PredictionService
 from api.services.batch_service import BatchService
 from shared.logging import setup_logging
+from shared.config import MAX_BATCH_RECORDS
 
 logger = setup_logging("predictions_router")
 
@@ -174,8 +175,8 @@ async def predict_batch(request: BatchPredictionRequest) -> BatchPredictionRespo
         )
         
         # Validate batch size
-        if len(request.data) > 10000:
-            raise ValueError("Batch size cannot exceed 10,000 records")
+        if len(request.data) > MAX_BATCH_RECORDS:
+            raise ValueError(f"Batch size cannot exceed {MAX_BATCH_RECORDS} records")
         
         if len(request.data) == 0:
             raise ValueError("Batch must contain at least 1 record")
@@ -295,34 +296,28 @@ async def get_batch_status(batch_id: str):
     }
 )
 async def get_batch_results(batch_id: str):
-    """
-    Retrieve prediction results for a completed batch job.
-    
-    **Notes:**
-    - Results are cached for 24 hours
-    - If batch still processing, returns HTTP 202
-    - Results limited to first 100 records (summary shows all)
-    - Use `batch_id` to correlate with original submission
-    
-    **Response Includes:**
-    - `summary`: Aggregated statistics (total records, churn rate, etc.)
-    - `results`: Detailed predictions for each customer
-    """
     try:
         logger.info(f"Results request for batch: {batch_id}")
         
         results = batch_service.get_batch_results(batch_id)
         
         if results is None:
+            status_info = batch_service.get_batch_job_status(batch_id)
+            if status_info and status_info.status in ["submitted", "processing"]:
+                raise HTTPException(
+                    status_code=status.HTTP_202_ACCEPTED,
+                    detail="Batch still processing, check status endpoint"
+                )
+            
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Batch results not found or expired: {batch_id}"
             )
         
-        if results.get("status") == "processing":
+        if "error" in results:
             raise HTTPException(
-                status_code=status.HTTP_202_ACCEPTED,
-                detail="Batch still processing, check status endpoint"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=results["error"]
             )
         
         return results
@@ -335,7 +330,6 @@ async def get_batch_results(batch_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve batch results"
         )
-    
 
 @router.post(
     "/collect-training-data",
