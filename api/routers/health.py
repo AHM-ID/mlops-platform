@@ -1,145 +1,57 @@
-"""
-Health Check Router
-Provides endpoints for system health and readiness checks
-"""
+from fastapi import APIRouter, HTTPException
+from typing import Dict, Any
+import logging
 
-from fastapi import APIRouter, HTTPException, status
-from datetime import datetime
-import mlflow
-import redis
-import psycopg2
-from typing import Dict
-
-from api.schemas import HealthStatus
-from shared.config import (
-    MLFLOW_TRACKING_URI, 
-    REDIS_URL, 
-    POSTGRES_HOST,
-    POSTGRES_PORT,
-    POSTGRES_USER,
-    POSTGRES_PASSWORD, 
-    POSTGRES_DB
+from .health_checks import (
+    check_mlflow_health,
+    check_redis_health,
+    check_postgres_health,
+    get_system_resources
 )
-from shared.logging import setup_logging
 
-logger = setup_logging("health_router")
-
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def check_mlflow() -> str:
-    """Check MLflow connectivity"""
-    try:
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        # Try to list experiments
-        experiments = mlflow.search_experiments(max_results=1)
-        return "connected"
-    except Exception as e:
-        logger.warning(f"MLflow health check failed: {e}")
-        return "disconnected"
-
-
-def check_redis() -> str:
-    """Check Redis connectivity"""
-    try:
-        client = redis.from_url(REDIS_URL, socket_connect_timeout=5)
-        client.ping()
-        return "connected"
-    except Exception as e:
-        logger.warning(f"Redis health check failed: {e}")
-        return "disconnected"
-
-
-def check_postgres() -> str:
-    """Check PostgreSQL connectivity"""
-    try:
-        conn = psycopg2.connect(
-            host=POSTGRES_HOST,
-            port=POSTGRES_PORT,
-            user=POSTGRES_USER,
-            password=POSTGRES_PASSWORD,
-            database=POSTGRES_DB
-        )
-        conn.close()
-        return "connected"
-    except Exception as e:
-        logger.warning(f"PostgreSQL health check failed: {e}")
-        return "disconnected"
-
-
-@router.get(
-    "/health",
-    response_model=HealthStatus,
-    status_code=status.HTTP_200_OK,
-    summary="Health Check",
-    description="Check the health of the API and its dependencies",
-    responses={
-        200: {
-            "description": "API is healthy",
-            "example": {
-                "status": "healthy",
-                "version": "3.0.0",
-                "timestamp": "2024-01-15T10:30:00Z",
-                "services": {
-                    "mlflow": "connected",
-                    "postgres": "connected",
-                    "redis": "connected"
-                }
-            }
+def _build_health_response(
+    mlflow_ok: bool,
+    redis_ok: bool,
+    postgres_ok: bool,
+    system_resources: Dict[str, float]
+) -> Dict[str, Any]:
+    all_ok = mlflow_ok and redis_ok and postgres_ok
+    
+    return {
+        "status": "healthy" if all_ok else "degraded",
+        "dependencies": {
+            "mlflow": "ok" if mlflow_ok else "error",
+            "redis": "ok" if redis_ok else "error",
+            "postgres": "ok" if postgres_ok else "error"
         },
-        503: {
-            "description": "API is degraded or unhealthy",
-            "example": {
-                "status": "unhealthy",
-                "version": "3.0.0",
-                "timestamp": "2024-01-15T10:30:00Z",
-                "services": {
-                    "mlflow": "disconnected",
-                    "postgres": "connected",
-                    "redis": "connected"
-                }
-            }
-        }
+        "system": system_resources
     }
-)
-async def health_check() -> HealthStatus:
-    """
-    Perform a comprehensive health check on the API and dependencies.
-    
-    **Checked Components:**
-    - MLflow Model Registry connectivity
-    - PostgreSQL database connectivity
-    - Redis cache connectivity
-    
-    **Returns:**
-    - `healthy`: All services connected
-    - `degraded`: Some services unavailable
-    - `unhealthy`: Critical service down
-    """
-    logger.info("Health check requested")
-    
-    services: Dict[str, str] = {}
-    
-    # Check each service
-    services["mlflow"] = check_mlflow()
-    services["postgres"] = check_postgres()
-    services["redis"] = check_redis()
-    
-    # Determine overall status
-    disconnected_count = sum(1 for s in services.values() if s == "disconnected")
-    
-    if disconnected_count == 0:
-        status_value = "healthy"
-    elif disconnected_count < 2:
-        status_value = "degraded"
-    else:
-        status_value = "unhealthy"
-        logger.warning(f"Health check failed - unhealthy status: {services}")
-    
-    return HealthStatus(
-        status=status_value,
-        version="3.0.0",
-        timestamp=datetime.now(),
-        services=services
-    )
 
+
+@router.get("/health")
+async def health_check():
+    try:
+        mlflow_ok = check_mlflow_health()
+        redis_ok = check_redis_health()
+        postgres_ok = check_postgres_health()
+        system_resources = get_system_resources()
+        
+        response = _build_health_response(
+            mlflow_ok, redis_ok, postgres_ok, system_resources
+        )
+        
+        if response["status"] != "healthy":
+            logger.warning(f"System degraded: {response}")
+            raise HTTPException(status_code=503, detail=response)
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Health check failed: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=str(e))
