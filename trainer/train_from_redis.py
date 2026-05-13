@@ -1,4 +1,3 @@
-"""Training pipeline with Redis support and production comparison."""
 import os
 import sys
 

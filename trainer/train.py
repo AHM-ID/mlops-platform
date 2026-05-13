@@ -1,4 +1,3 @@
-"""Main training pipeline with separated orchestration."""
 import os
 import sys
 
