@@ -5,14 +5,13 @@
 1. [Introduction](#introduction)
 2. [System Overview](#system-overview)
 3. [Architecture](#architecture)
-4. [Prerequisites](#prerequisites)
-5. [Installation and Deployment](#installation-and-deployment)
-6. [Configuration](#configuration)
-7. [API Reference](#api-reference)
-8. [Using the Platform](#using-the-platform)
-9. [Monitoring and Observability](#monitoring-and-observability)
-10. [Testing](#testing)
-11. [Development Guide](#development-guide)
+4. [Installation and Deployment](#installation-and-deployment)
+5. [Configuration](#configuration)
+6. [API Reference](#api-reference)
+7. [Using the Platform](#using-the-platform)
+8. [Monitoring and Observability](#monitoring-and-observability)
+9.  [Testing](#testing)
+10. [Development Guide](#development-guide)
 
 ---
 
@@ -20,7 +19,7 @@
 
 The MLOps Platform is a production‑grade system for customer churn prediction. It provides a complete machine learning operations lifecycle: data preprocessing, model training with hyperparameter optimization, experiment tracking, model versioning, real‑time and batch inference, asynchronous retraining, automatic data drift detection, feature caching, and full observability (metrics, logs, dashboards).
 
-Designed to run on a single server with Docker Compose, it eliminates the complexity of Kubernetes‑based alternatives while delivering enterprise‑grade capabilities. All components are containerised and can be deployed in under 30 minutes.
+Designed to run on a single server with Docker Compose, it eliminates the complexity of Kubernetes‑based alternatives while delivering enterprise‑grade capabilities. All components are containerized and can be deployed in under 30 minutes.
 
 ---
 
@@ -47,7 +46,7 @@ Designed to run on a single server with Docker Compose, it eliminates the comple
 
 - API key authentication with three roles: `admin`, `user`, `readonly`.
 - Role‑based rate limiting (sliding window algorithm, Redis‑backed).
-- All secrets externalised via `.env` file.
+- All secrets externalized via `.env` file.
 
 ### Observability
 
@@ -58,7 +57,7 @@ Designed to run on a single server with Docker Compose, it eliminates the comple
 
 ### Deployment
 
-- Fully containerised with Docker Compose / Podman Compose.
+- Fully containerized with Docker Compose / Podman Compose.
 - Nginx reverse proxy for unified access: `/api/*`, `/mlflow/*`, `/prometheus/*`, `/grafana/*`.
 - Single command deployment: `make up`.
 
@@ -166,41 +165,12 @@ This layer manages all asynchronous tasks including batch predictions, model ret
 
 ---
 
-## Prerequisites
-
-### Software Requirements
-
-| Software       | Version | Purpose                       |
-| -------------- | ------- | ----------------------------- |
-| Docker         | 20.10+  | Container runtime             |
-| Docker Compose | 2.0+    | Multi‑container orchestration |
-| Make           | 4.0+    | Build automation              |
-| Git            | 2.0+    | Version control               |
-| curl           | 7.0+    | API testing                   |
-
-Podman can be used as an alternative (the Makefile auto‑detects Linux with Podman).
-
-### Hardware Requirements
-
-| Environment | CPU     | RAM  | Disk  |
-| ----------- | ------- | ---- | ----- |
-| Minimum     | 2 cores | 4 GB | 10 GB |
-| Recommended | 4 cores | 8 GB | 20 GB |
-
-### Network Requirements
-
-- The following ports must be available on the host: 5432, 6379, 3900, 3901, 3903, 5000, 8000, 9090, 3000, 3100, 8888, 2020, 8080.
-- Internet access for pulling Docker images.
-- Access to a PyPI mirror for Python packages (configurable).
-
----
-
 ## Installation and Deployment
 
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone git@hamgit.ir:mr.amirhosseinmaleki/mlops-platform.git
 cd mlops-platform
 ```
 
@@ -227,7 +197,7 @@ make up           # Start all services
 ```
 
 The first startup will:
-- Initialise PostgreSQL, Redis, and Garage.
+- Initialize PostgreSQL, Redis, and Garage.
 - Run the initial model training from `data/churn.csv`.
 - Start API, worker, Prometheus, Loki, Fluent‑bit, Grafana, and Nginx.
 
@@ -329,7 +299,7 @@ All configuration is done through the `.env` file. Below are the most important 
 
 All protected endpoints require:
 ```
-X-API-Key: <your-api-key>
+X-API-Key: admin-secret-key-change-in-production
 ```
 
 ### Endpoint Summary
