@@ -125,7 +125,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 12,
         "x": 6,
         "y": 0
       },
@@ -159,6 +159,81 @@
       ],
       "title": "API Memory Usage",
       "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "No Drift"
+                },
+                "1": {
+                  "text": "Drift Detected - Alert"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "10.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dataset_drift",
+          "legendFormat": "Data Drift Status",
+          "refId": "A"
+        }
+      ],
+      "title": "Data Drift Alert",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -221,10 +296,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 16,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 8
       },
       "id": 3,
       "options": {
@@ -318,7 +393,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
         "y": 8
@@ -367,7 +442,8 @@
   "schemaVersion": 38,
   "tags": [
     "mlops",
-    "infrastructure"
+    "infrastructure",
+    "drift"
   ],
   "templating": {
     "list": []
@@ -380,6 +456,6 @@
   "timezone": "",
   "title": "System Health & Infrastructure",
   "uid": "system-health",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

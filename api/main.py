@@ -5,9 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from fastapi import Request
 import asyncio
 from shared.retrain_queue import RetrainQueueManager
+from fastapi.openapi.utils import get_openapi
 
 from api.auth import get_role_from_api_key
 from api.rate_limiter import get_rate_limiter
@@ -16,6 +16,8 @@ from api.routers import (
     predictions,
     models,
     batch_jobs,
+    labeling,
+    drift,
     monitoring
 )
 from api.routers.retrains import router as retrain_router
@@ -23,19 +25,18 @@ from api.routers.retrain_queue import router as retrain_queue_router
 
 from api.routers.monitoring import metrics_collector
 from shared.logging import setup_logging
-from shared.metrics import REQUESTS, REQUEST_DURATION, ACTIVE_REQUESTS, start_system_metrics_collector, RETRAIN_QUEUE_LENGTH
-from shared.feature_store import update_cache_hit_rate
+from shared.metrics import REQUESTS, REQUEST_DURATION, start_system_metrics_collector, RETRAIN_QUEUE_LENGTH
 
 logger = setup_logging("api")
 
 executor = ThreadPoolExecutor(max_workers=2)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting MLOps Platform API")
     start_system_metrics_collector()
     
-    # Initialize queue manager once, reuse connection
     queue_manager = RetrainQueueManager()
     
     async def update_queue_length():
@@ -58,7 +59,6 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Graceful shutdown
     logger.info("Shutting down MLOps Platform API")
     queue_task.cancel()
     try:
@@ -79,6 +79,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(health.router, tags=["Health"])
+app.include_router(predictions.router, prefix="/predictions", tags=["Predictions"])
+app.include_router(models.router, prefix="/models", tags=["Model Management"])
+app.include_router(batch_jobs.router, prefix="/batch", tags=["Batch Processing"])
+app.include_router(monitoring.router, prefix="/monitoring", tags=["Monitoring & Metrics"])
+app.include_router(retrain_router, tags=["Model Retraining"])
+app.include_router(retrain_queue_router, tags=["Model Retraining"])
+app.include_router(labeling.router, tags=["Feedback & Labeling"])
+app.include_router(drift.router, prefix="/monitoring", tags=["Data Drift Monitoring"])
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -88,13 +98,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ========== Middlewares ==========
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """
-    Authentication middleware - extracts and validates API key, sets role in request state.
-    Public endpoints (health, docs, metrics) are excluded from authentication.
-    """
-    # Public endpoints that don't require authentication
     public_paths = ["/health", "/docs", "/redoc", "/openapi.json", "/", "/monitoring/metrics"]
     
     if any(request.url.path.startswith(path) for path in public_paths):
@@ -102,7 +108,6 @@ async def auth_middleware(request: Request, call_next):
         response = await call_next(request)
         return response
     
-    # Extract API key from header
     api_key = request.headers.get("X-API-Key")
     
     if api_key:
@@ -119,19 +124,16 @@ async def auth_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    """Rate limiting middleware - checks rate limits before processing request."""
     limiter = get_rate_limiter()
     api_key = request.headers.get("X-API-Key", "")
     identifier = api_key if api_key else request.client.host
     role = getattr(request.state, "role", "anonymous")
     
-    # Check rate limit (raises HTTPException if exceeded)
     rate_info = limiter.check_rate_limit(identifier, role)
     request.state.rate_limit_info = rate_info
     
     response = await call_next(request)
     
-    # Add rate limit headers to response
     if hasattr(request.state, "rate_limit_info"):
         info = request.state.rate_limit_info
         response.headers["X-RateLimit-Limit"] = str(info.get("limit", 0))
@@ -150,11 +152,9 @@ async def metrics_middleware(request: Request, call_next):
         response = await call_next(request)
         duration = time.time() - start_time
         
-        # Prometheus Client
         REQUESTS.labels(method=request.method, endpoint=normalized_path, status=str(response.status_code)).inc()
         REQUEST_DURATION.labels(method=request.method, endpoint=normalized_path).observe(duration)
         
-        # In-memory collector
         if "/metrics" not in path:
             metrics_collector.record_request(success=response.status_code < 400, response_time_ms=duration*1000)
             
@@ -213,49 +213,9 @@ async def logging_middleware(request: Request, call_next):
         )
         raise
 
-app.include_router(
-    health.router,
-    tags=["Health"]
-)
-
-app.include_router(
-    predictions.router,
-    prefix="/predictions",
-    tags=["Predictions"]
-)
-
-app.include_router(
-    models.router,
-    prefix="/models",
-    tags=["Model Management"]
-)
-
-app.include_router(
-    batch_jobs.router,
-    prefix="/batch",
-    tags=["Batch Processing"]
-)
-
-app.include_router(
-    monitoring.router,
-    prefix="/monitoring",
-    tags=["Monitoring & Metrics"]
-)
-
-app.include_router(
-    retrain_router,
-    tags=["Model Retraining"]
-)
-
-app.include_router(
-    retrain_queue_router,
-    tags=["Model Retraining"]
-)
-
 
 @app.get("/", tags=["Root"])
 async def root():
-    """API root endpoint with documentation links"""
     return {
         "message": "MLOps Platform API",
         "version": "3.0.0",
@@ -267,8 +227,43 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def quick_health():
-    """Quick health check"""
     return {"status": "healthy"}
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def get_custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        openapi_version=app.openapi_version,
+        description=app.description,
+        routes=app.routes,
+        servers=app.servers,
+    )
+    
+    # Add security scheme
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    
+    openapi_schema["components"]["securitySchemes"] = {
+        "APIKeyHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key"
+        }
+    }
+    
+    # Apply security to all operations
+    if "security" not in openapi_schema:
+        openapi_schema["security"] = []
+    
+    openapi_schema["security"].append({"APIKeyHeader": []})
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
 
 
 if __name__ == "__main__":

@@ -1,10 +1,16 @@
 import os
+import redis
+
+def get_redis_client():
+    return redis.from_url(REDIS_URL, decode_responses=True)
 
 # Core URLs
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_EXPIRE_SECONDS = int(os.getenv("REDIS_EXPIRE_SECONDS", "86400"))
+REDIS_EXPIRE_DAYS = int(os.getenv("REDIS_EXPIRE_DAYS", "30"))
 
 # PostgreSQL
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")

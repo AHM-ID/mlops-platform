@@ -5,18 +5,17 @@ import mlflow
 import mlflow.pyfunc
 import pandas as pd
 from api.schemas import PredictionRequest
-from trainer.features import prepare
 from shared.config import MODEL_NAME, MLFLOW_TRACKING_URI, REDIS_URL, CACHE_TTL_SECONDS, COLUMNS_FILE
 from shared.metrics import PREDICTION_LATENCY, MODEL_ACTIVE_VERSION, MODEL_AUC_SCORE, PREDICTION_OUTCOME_TOTAL
 from shared.logging import setup_logging
-from shared.feature_store import get_cached_features, cache_features, get_feature_hash
+from shared.feature_store import get_cached_features, cache_features, FeatureStore
 import redis
+import joblib
+import tempfile
 
 logger = setup_logging("prediction_service")
 
-
 class PredictionService:
-
     def __init__(self):
         self._model = None
         self._columns = None
@@ -42,6 +41,12 @@ class PredictionService:
             
             if auc == 0:
                 logger.warning(f"AUC metric not found in run {latest.run_id}. Available metrics: {list(run.data.metrics.keys())}")
+            
+            tmp_dir = tempfile.mkdtemp()
+            artifact_path = client.download_artifacts(latest.run_id, COLUMNS_FILE, tmp_dir)
+            self._columns = joblib.load(artifact_path)
+            logger.info(f"Loaded {len(self._columns)} feature columns for inference")
+            
         except Exception as e:
             logger.error(
                 "Failed to load model from MLflow",
@@ -53,31 +58,11 @@ class PredictionService:
             )
             raise
 
-    def _load_columns(self):
-        """Load feature columns from MLflow artifacts (cached in memory)"""
-        if self._columns is not None:
-            return self._columns
-        try:
-            import tempfile
-            import joblib
-            client = mlflow.tracking.MlflowClient()
-            latest = client.get_latest_versions(MODEL_NAME, stages=["Production"])[0]
-            tmp_dir = tempfile.mkdtemp()
-            artifact_path = client.download_artifacts(latest.run_id, COLUMNS_FILE, tmp_dir)
-            self._columns = joblib.load(artifact_path)
-            logger.info(f"Loaded {len(self._columns)} feature columns for inference")
-            return self._columns
-        except Exception as e:
-            logger.warning(f"Could not load columns.pkl: {e}")
-            return None
-
-    def predict(self, request: PredictionRequest) -> Tuple[int, float, str]:
+    def predict(self, request: PredictionRequest) -> Tuple[int, float, str, str]:
         request_id = str(uuid.uuid4())
         start_time = time.time()
         
         try:
-            self._load_columns()
-            
             data = {
                 "tenure": request.tenure,
                 "MonthlyCharges": request.MonthlyCharges,
@@ -89,12 +74,12 @@ class PredictionService:
             
             df = pd.DataFrame([data])
             
-            X = get_cached_features(df)
+            X = get_cached_features(df, model_version=self._model_version)
             cache_status = "hit" if X is not None else "miss"
             
             if X is None:
-                X = prepare(df, training=False, columns=self._columns)
-                cache_features(df, X, ttl=CACHE_TTL_SECONDS)
+                X = FeatureStore.prepare(df, training=False, columns=self._columns)
+                cache_features(df, X, ttl=CACHE_TTL_SECONDS, model_version=self._model_version)
             
             pred = self._model.predict(X)[0]
             probability = 0.5
@@ -123,18 +108,22 @@ class PredictionService:
             )
             
             self.update_prediction_stats(pred, probability)
-            
+
+            prediction_id = ""
             try:
                 from shared.retrain_queue import RetrainQueueManager
                 queue = RetrainQueueManager()
-                queue.add_prediction(data, int(pred), float(probability))
-            except Exception as e:
-                logger.warning(
-                    f"Failed to save prediction to retrain queue: {e}",
-                    extra={"request_id": request_id}
+                prediction_id = queue.add_prediction(
+                    features=data,
+                    prediction=int(pred),
+                    probability=float(probability),
+                    customer_id=request.customer_id
                 )
+            except Exception as e:
+                logger.warning(f"Failed to save to retrain queue: {e}",
+                    extra={"request_id": request_id})
             
-            return int(pred), float(probability), self._model_version
+            return int(pred), float(probability), self._model_version, prediction_id
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000

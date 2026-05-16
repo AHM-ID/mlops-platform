@@ -3,7 +3,7 @@
 # Works on Linux (Podman) and Windows (Docker)
 # ============================================
 
-.PHONY: help build-base up down down-v restart logs ps
+.PHONY: help build-base up down down-v restart logs ps test test-unit test-integration
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
@@ -90,3 +90,15 @@ endif
 
 ps:
 	$(COMPOSE_CMD) ps
+
+test:
+	@echo "Running all tests..."
+	cd scripts && bash run_tests.sh
+
+test-unit:
+	@echo "Running unit tests..."
+	pytest tests/ -m "not integration" -v
+
+test-integration:
+	@echo "Running integration tests..."
+	pytest tests/ -m integration -v

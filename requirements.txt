@@ -9,9 +9,10 @@ optuna==3.5.0
 redis
 celery
 prometheus-client
-xgboost
 python-json-logger==2.0.7
 boto3
 psycopg2-binary==2.9.12
 psutil
 python-multipart
+evidently==0.4.20
+pytest

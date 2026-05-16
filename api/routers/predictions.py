@@ -3,16 +3,14 @@ Predictions Router
 Handles real-time and async batch prediction requests with authentication
 """
 
-from fastapi import APIRouter, HTTPException, status, BackgroundTasks, Depends
-from typing import List, Optional
-from datetime import datetime
-import uuid
+from fastapi import APIRouter, HTTPException, status, Depends
 
 from api.schemas import (
     PredictionRequest,
     PredictionResponse,
     BatchPredictionRequest,
     BatchPredictionResponse,
+    CollectTrainingDataResponse
 )
 from api.services.prediction_service import PredictionService
 from api.services.batch_service import BatchService
@@ -44,7 +42,7 @@ async def predict_single(
     try:
         logger.info(f"Single prediction request for customer: {request.customer_id} by role: {role}")
         
-        pred, prob, model_version = prediction_service.predict(request)
+        pred, prob, model_version, prediction_id = prediction_service.predict(request)
         
         logger.info(
             f"Prediction completed - customer: {request.customer_id}, "
@@ -53,10 +51,11 @@ async def predict_single(
         
         return PredictionResponse(
             customer_id=request.customer_id,
-            prediction=pred,
-            probability=prob,
-            confidence=prob * 100,
-            model_version=model_version
+            prediction=int(pred),
+            probability=float(prob),
+            confidence=float(prob) * 100,
+            model_version=model_version,
+            prediction_id=prediction_id
         )
     
     except Exception as e:
@@ -170,9 +169,9 @@ async def get_batch_results(
             detail="Failed to retrieve batch results"
         )
 
-
 @router.post(
     "/collect-training-data",
+    response_model=CollectTrainingDataResponse,
     status_code=status.HTTP_200_OK,
     summary="Collect Training Data",
     description="Submit prediction data with actual outcome for future retraining (requires write permission)"
@@ -181,7 +180,7 @@ async def collect_training_data(
     request: PredictionRequest,
     actual_churn: int,
     role: str = Depends(require_write)
-):
+) -> CollectTrainingDataResponse:
     """Collect training data for model retraining."""
     try:
         from shared.retrain_queue import RetrainQueueManager
@@ -201,7 +200,10 @@ async def collect_training_data(
         
         if success:
             logger.info(f"Training data collected for customer: {request.customer_id} by role: {role}")
-            return {"status": "success", "message": "Training data collected"}
+            return CollectTrainingDataResponse(
+                status="success",
+                message="Training data collected"
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

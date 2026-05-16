@@ -58,6 +58,7 @@ class PredictionResponse(BaseModel):
     probability: float = Field(..., ge=0.0, le=1.0, description="Probability of churn")
     confidence: float = Field(..., ge=0.0, le=100.0, description="Confidence percentage")
     model_version: str = Field(..., description="Model version used for prediction")
+    prediction_id: str = Field(default="", description="ID for submitting feedback")
 
     class Config:
         json_schema_extra = {
@@ -66,7 +67,8 @@ class PredictionResponse(BaseModel):
                 "prediction": 1,
                 "probability": 0.75,
                 "confidence": 75.0,
-                "model_version": "1"
+                "model_version": "1",
+                "prediction_id": "pred_abc123"
             }
         }
 
@@ -112,6 +114,23 @@ class BatchPredictionResponse(BaseModel):
             }
         }
 
+class CollectTrainingDataResponse(BaseModel):
+    status: str
+    message: str
+
+class DriftCheckDetail(BaseModel):
+    run_id: str
+    timestamp: Any
+    dataset_drift: bool
+
+class DriftStatusResponse(BaseModel):
+    recent_checks: List[DriftCheckDetail]
+    status: str
+
+class TriggerRetrainResponse(BaseModel):
+    status: str
+    task_id: str
+    message: str
 
 class ModelMetadata(BaseModel):
     name: str = Field(..., description="Model name")

@@ -23,6 +23,8 @@ MODEL_ACTIVE_VERSION = Gauge('model_active_version', 'Active model version numbe
 MODEL_AUC_SCORE = Gauge('model_auc_score', 'Current production model AUC score')
 FEATURE_CACHE_HIT_RATE = Gauge('feature_cache_hit_rate', 'Feature cache hit rate')
 PREDICTION_OUTCOME_TOTAL = Counter('prediction_outcome_total', 'Total predictions by outcome', ['outcome'])
+DATASET_DRIFT = Gauge('dataset_drift', 'Data drift detected (1) or not (0)')
+DRIFTED_COLUMNS_COUNT = Gauge('drifted_columns_count', 'Number of drifted columns')
 
 def start_system_metrics_collector():
     """Start background thread to collect system metrics"""

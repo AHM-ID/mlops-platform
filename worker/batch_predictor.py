@@ -1,4 +1,6 @@
 import sys
+
+from shared.feature_store import FeatureStore
 sys.path.insert(0, '/app')
 
 from celery import Task
@@ -8,10 +10,11 @@ import mlflow
 import mlflow.pyfunc
 import redis
 import json
+import pickle
 from typing import List, Dict
 from shared.config import MODEL_NAME, MLFLOW_TRACKING_URI, REDIS_URL
-from trainer.features import prepare
 from shared.logging import setup_logging
+from shared.feature_store import FeatureStore
 
 logger = setup_logging("batch_predictor")
 
@@ -38,14 +41,18 @@ def infer(model, df):
 class BatchPredictionTask(Task):
     _model = None
     _columns = None
+    _model_version = None
     _redis_client = None
 
     def get_model(self):
         if self._model is None:
             mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
             self._model = mlflow.pyfunc.load_model(f"models:/{MODEL_NAME}/Production")
-            logger.info("Batch prediction model loaded")
-        return self._model
+            client = mlflow.tracking.MlflowClient()
+            latest = client.get_latest_versions(MODEL_NAME, stages=["Production"])[0]
+            self._model_version = str(latest.version)
+            logger.info(f"Batch prediction model loaded: v{self._model_version}")
+        return self._model, self._model_version
 
     def get_columns(self):
         if self._columns is None:
@@ -66,7 +73,7 @@ class BatchPredictionTask(Task):
     def get_redis(self):
         if self._redis_client is None:
             try:
-                self._redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+                self._redis_client = redis.from_url(REDIS_URL, decode_responses=False)
                 self._redis_client.ping()
                 logger.info(f"Redis connection established in worker at {REDIS_URL}")
             except Exception as e:
@@ -82,7 +89,7 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
     df = pd.DataFrame(data)
     logger.info(f"Input data shape: {df.shape}")
 
-    model = self.get_model()
+    model, model_version = self.get_model()
     columns = self.get_columns()
 
     if columns is None:
@@ -96,7 +103,7 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
     logger.info(f"Columns loaded successfully, {len(columns)} features")
 
     try:
-        X = prepare(df, training=False, columns=columns)
+        X = FeatureStore.prepare(df, training=False, columns=columns)
         logger.info(f"Features prepared, shape: {X.shape}")
 
         predictions = []
@@ -118,7 +125,6 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
 
         logger.info(f"Predictions completed for all records")
 
-        # Prepare results
         results = []
         for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
             results.append({
@@ -128,7 +134,6 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
                 "original_data": data[i] if i < len(data) else {}
             })
 
-        # Save batch results
         redis_client = self.get_redis()
         import datetime
         if redis_client and batch_id:
@@ -141,11 +146,10 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
             redis_client.setex(
                 f"batch_results:{batch_id}",
                 86400,
-                json.dumps(result_data)
+                pickle.dumps(result_data)
             )
             logger.info(f"Batch results stored in Redis with key: batch_results:{batch_id}")
 
-        # Summary
         pred_series = pd.Series(predictions)
         summary = {
             "batch_id": batch_id,
@@ -153,7 +157,8 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
             "churn_predictions": int(pred_series.sum()),
             "no_churn_predictions": int(len(predictions) - pred_series.sum()),
             "churn_rate": float(pred_series.mean()),
-            "average_churn_probability": float(sum(probabilities) / len(probabilities)) if probabilities else 0
+            "average_churn_probability": float(sum(probabilities) / len(probabilities)) if probabilities else 0,
+            "model_version": model_version
         }
 
         logger.info(f"Batch prediction completed: {summary}")
@@ -173,10 +178,10 @@ def batch_predict(self, data: List[Dict], batch_id: str = None):
 @app.task(name="get_batch_results")
 def get_batch_results(batch_id: str):
     try:
-        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        redis_client = redis.from_url(REDIS_URL, decode_responses=False)
         results = redis_client.get(f"batch_results:{batch_id}")
         if results:
-            return json.loads(results)
+            return pickle.loads(results)
         else:
             return {"error": "Batch not found or expired", "batch_id": batch_id}
     except Exception as e:

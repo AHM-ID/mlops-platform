@@ -1,17 +1,28 @@
 import redis
 import hashlib
-import json
+import pickle
 import pandas as pd
-from typing import Optional, Dict, Any
-from shared.config import REDIS_URL
+from typing import Optional, Dict, Any, List
+from shared.config import REDIS_URL, CACHE_TTL_SECONDS
 from shared.logging import setup_logging
-from shared.metrics import CACHE_HITS, CACHE_MISSES, FEATURE_CACHE_HIT_RATE
 
 logger = setup_logging("feature_store")
 
-# Initialize Redis connection
+_metrics = None
+
+def _get_metrics():
+    global _metrics
+    if _metrics is None:
+        from shared.metrics import CACHE_HITS, CACHE_MISSES, FEATURE_CACHE_HIT_RATE
+        _metrics = {
+            'hits': CACHE_HITS,
+            'misses': CACHE_MISSES,
+            'hit_rate': FEATURE_CACHE_HIT_RATE
+        }
+    return _metrics
+
 try:
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client = redis.from_url(REDIS_URL, decode_responses=False)
     redis_client.ping()
     logger.info("Redis connection established for feature store")
 except Exception as e:
@@ -19,92 +30,70 @@ except Exception as e:
     redis_client = None
 
 def update_cache_hit_rate():
-    """Update the Prometheus gauge with current cache hit rate"""
     try:
         if redis_client is None:
-            FEATURE_CACHE_HIT_RATE.set(0)
+            metrics = _get_metrics()
+            metrics['hit_rate'].set(0)
             return
-        
         total_hits = int(redis_client.get("cache_total_hits") or 0)
         total_misses = int(redis_client.get("cache_total_misses") or 0)
-        
         if total_hits + total_misses > 0:
             hit_rate = total_hits / (total_hits + total_misses)
         else:
             hit_rate = 0.0
-        
-        FEATURE_CACHE_HIT_RATE.set(hit_rate)
+        metrics = _get_metrics()
+        metrics['hit_rate'].set(hit_rate)
     except Exception as e:
         logger.error(f"Failed to update cache hit rate: {e}")
 
 def get_feature_hash(df: pd.DataFrame) -> str:
-    """Generate unique hash for input data"""
-    # Sort columns to ensure consistent hash
     df_sorted = df.reindex(sorted(df.columns), axis=1)
-    hash_input = df_sorted.to_json(orient='records')
+    hash_input = df_sorted.to_json(orient='records', sort_keys=True)
     return hashlib.md5(hash_input.encode()).hexdigest()
 
-def get_cached_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Retrieve cached features if available"""
+def get_cached_features(df: pd.DataFrame, model_version: str = None) -> Optional[pd.DataFrame]:
     if redis_client is None:
         return None
-    
     try:
         feature_hash = get_feature_hash(df)
-        cached = redis_client.get(f"features:{feature_hash}")
-        
+        version_suffix = f":v{model_version}" if model_version else ""
+        key = f"features:{feature_hash}{version_suffix}"
+        cached = redis_client.get(key)
         if cached:
-            CACHE_HITS.labels(service='api').inc()
-            logger.info(f"Cache hit for features: {feature_hash[:8]}")
-            cached_data = json.loads(cached)
+            metrics = _get_metrics()
+            metrics['hits'].labels(service='api').inc()
             redis_client.incr("cache_total_hits")
-            update_cache_hit_rate()
-            return pd.DataFrame(cached_data)
+            logger.debug(f"Cache hit: {key[:16]}")
+            return pickle.loads(cached)
         else:
-            CACHE_MISSES.labels(service='api').inc()
-            logger.debug(f"Cache miss for features: {feature_hash[:8]}")
+            metrics = _get_metrics()
+            metrics['misses'].labels(service='api').inc()
             redis_client.incr("cache_total_misses")
-            update_cache_hit_rate()
             return None
-            
     except Exception as e:
         logger.error(f"Failed to get cached features: {e}")
         return None
 
-def cache_features(df: pd.DataFrame, X: pd.DataFrame, ttl: int = 3600) -> str:
-    """Cache computed features with TTL in seconds (default 1 hour)"""
+def cache_features(df: pd.DataFrame, X: pd.DataFrame, ttl: int = None, model_version: str = None) -> str:
     if redis_client is None:
         return ""
-    
+    if ttl is None:
+        ttl = CACHE_TTL_SECONDS
     try:
         feature_hash = get_feature_hash(df)
-        # Convert to list of lists for JSON serialization
-        features_json = X.values.tolist()
-        
-        redis_client.setex(
-            f"features:{feature_hash}", 
-            ttl, 
-            json.dumps({
-                "features": features_json,
-                "columns": X.columns.tolist(),
-                "shape": X.shape
-            })
-        )
-        
-        # Track cache stats
+        version_suffix = f":v{model_version}" if model_version else ""
+        key = f"features:{feature_hash}{version_suffix}"
+        redis_client.setex(key, ttl, pickle.dumps(X))
         redis_client.incr("cache_total_writes")
-        logger.info(f"Cached features for hash: {feature_hash[:8]}, TTL: {ttl}s")
-        return feature_hash
-        
+        logger.debug(f"Cached features: {key[:16]}, TTL={ttl}s")
+        return key
     except Exception as e:
         logger.error(f"Failed to cache features: {e}")
         return ""
 
 def get_cache_stats() -> Dict[str, Any]:
-    """Get cache performance statistics"""
     if redis_client is None:
         return {"status": "disabled", "reason": "Redis connection failed"}
-    
     try:
         stats = {
             "status": "active",
@@ -112,35 +101,116 @@ def get_cache_stats() -> Dict[str, Any]:
             "total_hits": int(redis_client.get("cache_total_hits") or 0),
             "total_misses": int(redis_client.get("cache_total_misses") or 0)
         }
-        
         if stats["total_hits"] + stats["total_misses"] > 0:
             stats["hit_rate"] = stats["total_hits"] / (stats["total_hits"] + stats["total_misses"])
         else:
             stats["hit_rate"] = 0
-            
         return stats
-        
     except Exception as e:
         logger.error(f"Failed to get cache stats: {e}")
         return {"status": "error", "error": str(e)}
 
-def clear_cache(batch_size: int = 100):
+def clear_cache(model_version: str = None, batch_size: int = 100):
     if redis_client is None:
         return
-    
     try:
         cursor = 0
         total_deleted = 0
-        
+        pattern = f"features:*{f':v{model_version}' if model_version else ''}"
         while True:
-            cursor, keys = redis_client.scan(cursor, match="features:*", count=batch_size)
+            cursor, keys = redis_client.scan(cursor, match=pattern, count=batch_size)
             if keys:
                 redis_client.delete(*keys)
                 total_deleted += len(keys)
             if cursor == 0:
                 break
-        
-        logger.info(f"Cleared {total_deleted} cached features in batches")
-        
+        logger.info(f"Cleared {total_deleted} cached features (pattern: {pattern})")
     except Exception as e:
         logger.error(f"Failed to clear cache: {e}")
+
+
+def clear_cache_for_model_version(model_version: str):
+    """
+    Clear all feature cache entries for a specific model version.
+    
+    This is called when a new model is promoted to production,
+    to invalidate old cached features.
+    
+    Args:
+        model_version: Version of the model whose cache should be cleared
+    """
+    if redis_client is None:
+        logger.warning("Redis not available, cannot clear cache for model version")
+        return
+    
+    try:
+        pattern = f"features:*:v{model_version}"
+        cursor = 0
+        deleted = 0
+        
+        while True:
+            cursor, keys = redis_client.scan(cursor, match=pattern, count=100)
+            if keys:
+                redis_client.delete(*keys)
+                deleted += len(keys)
+            if cursor == 0:
+                break
+        
+        logger.info(f"Cleared {deleted} cache entries for model version v{model_version}")
+        
+    except Exception as e:
+        logger.error(f"Failed to clear cache for model version {model_version}: {e}")
+
+
+class FeatureStore:
+    """Centralized feature transformation - single source of truth for both training and inference"""
+    
+    @staticmethod
+    def _drop_customer_id(df: pd.DataFrame) -> pd.DataFrame:
+        if "customerID" in df.columns:
+            return df.drop(columns=["customerID"])
+        return df
+
+    @staticmethod
+    def _coerce_total_charges(df: pd.DataFrame) -> pd.DataFrame:
+        df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
+        return df
+
+    @staticmethod
+    def _get_categorical_columns(df: pd.DataFrame) -> List[str]:
+        categorical = df.select_dtypes(include=["object"]).columns.tolist()
+        if "Churn" in categorical:
+            categorical.remove("Churn")
+        return categorical
+
+    @staticmethod
+    def _encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
+        categorical = FeatureStore._get_categorical_columns(df)
+        return pd.get_dummies(df, columns=categorical)
+
+    @staticmethod
+    def _split_target(df: pd.DataFrame):
+        y = df["Churn"].map({"Yes": 1, "No": 0})
+        X = df.drop(columns=["Churn"])
+        return X, y, X.columns
+
+    @staticmethod
+    def _align_columns(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
+        for col in columns:
+            if col not in df.columns:
+                df[col] = 0
+        return df[columns]
+
+    @classmethod
+    def prepare(cls, df: pd.DataFrame, training: bool = True, columns: Optional[List[str]] = None):
+        df = df.copy()
+        df = cls._drop_customer_id(df)
+        df = cls._coerce_total_charges(df)
+        df = df.dropna()
+        df = cls._encode_categoricals(df)
+        if training:
+            return cls._split_target(df)
+        else:
+            if columns is None:
+                raise ValueError("For inference, columns must be provided")
+            return cls._align_columns(df, columns)

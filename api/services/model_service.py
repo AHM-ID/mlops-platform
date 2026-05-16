@@ -9,6 +9,7 @@ from datetime import datetime
 
 from api.schemas import ModelMetadata, ModelListResponse
 from shared.config import MODEL_NAME, MLFLOW_TRACKING_URI
+from shared.feature_store import clear_cache_for_model_version
 from shared.logging import setup_logging
 
 logger = setup_logging("model_service")
@@ -80,19 +81,27 @@ class ModelService:
     def deploy_model(self, model_name: str, version: str, target_stage: str) -> bool:
         try:
             if target_stage == "Production":
-                # Archive previous Production models
-                current_prods = self.client.get_latest_versions(model_name, stages=["Production"])
-                for prod in current_prods:
+                # Get current production version before changing
+                current_prod_versions = self.client.get_latest_versions(model_name, stages=["Production"])
+                
+                # Promote new version
+                self.client.transition_model_version_stage(
+                    model_name, int(version), target_stage
+                )
+                
+                # Clear cache for old production model
+                for prod in current_prod_versions:
                     if str(prod.version) != str(version):
-                        self.client.transition_model_version_stage(
-                            model_name, prod.version, "Archived"
-                        )
-                        logger.info(f"Archived previous Production model v{prod.version}")
-
-            self.client.transition_model_version_stage(
-                model_name, int(version), target_stage
-            )
-            logger.info(f"Model {model_name} v{version} promoted to {target_stage}")
+                        clear_cache_for_model_version(prod.version)
+                        logger.info(f"Cleared feature cache for old production model v{prod.version}")
+                
+                logger.info(f"Model {model_name} v{version} promoted to {target_stage}")
+            else:
+                self.client.transition_model_version_stage(
+                    model_name, int(version), target_stage
+                )
+                logger.info(f"Model {model_name} v{version} promoted to {target_stage}")
+            
             return True
         except Exception as e:
             logger.error(f"Deployment failed: {e}", exc_info=True)
