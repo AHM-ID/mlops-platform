@@ -1,6 +1,7 @@
 import re
 import uuid
 import time
+from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -8,6 +9,8 @@ from fastapi import Request
 import asyncio
 from shared.retrain_queue import RetrainQueueManager
 
+from api.auth import get_role_from_api_key
+from api.rate_limiter import get_rate_limiter
 from api.routers import (
     health,
     predictions,
@@ -51,7 +54,7 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="MLOps Platform API",
-    description=""" Comprehensive API for ML Model Management and Predictions """,
+    description="Comprehensive API for ML Model Management and Predictions with Authentication and Rate Limiting",
     version="3.0.0",
     docs_url="/docs", 
     redoc_url="/redoc",
@@ -67,6 +70,58 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """
+    Authentication middleware - extracts and validates API key, sets role in request state.
+    Public endpoints (health, docs, metrics) are excluded from authentication.
+    """
+    # Public endpoints that don't require authentication
+    public_paths = ["/health", "/docs", "/redoc", "/openapi.json", "/", "/monitoring/metrics"]
+    
+    if any(request.url.path.startswith(path) for path in public_paths):
+        request.state.role = "anonymous"
+        response = await call_next(request)
+        return response
+    
+    # Extract API key from header
+    api_key = request.headers.get("X-API-Key")
+    
+    if api_key:
+        role = get_role_from_api_key(api_key)
+        if role:
+            request.state.role = role
+        else:
+            request.state.role = "anonymous"
+    else:
+        request.state.role = "anonymous"
+    
+    response = await call_next(request)
+    return response
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiting middleware - checks rate limits before processing request."""
+    limiter = get_rate_limiter()
+    api_key = request.headers.get("X-API-Key", "")
+    identifier = api_key if api_key else request.client.host
+    role = getattr(request.state, "role", "anonymous")
+    
+    # Check rate limit (raises HTTPException if exceeded)
+    rate_info = limiter.check_rate_limit(identifier, role)
+    request.state.rate_limit_info = rate_info
+    
+    response = await call_next(request)
+    
+    # Add rate limit headers to response
+    if hasattr(request.state, "rate_limit_info"):
+        info = request.state.rate_limit_info
+        response.headers["X-RateLimit-Limit"] = str(info.get("limit", 0))
+        response.headers["X-RateLimit-Remaining"] = str(info.get("remaining", 0))
+        response.headers["X-RateLimit-Reset"] = str(info.get("reset_time", 0))
+    
+    return response
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):

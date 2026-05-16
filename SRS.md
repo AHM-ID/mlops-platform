@@ -136,6 +136,20 @@
 - پروکسی معکوس باید در تولید، ترافیک غیررمزنگاری شده را به TLS هدایت کند.
 - گذرواژه‌های پیش‌فرض Grafana و Garage باید از طریق متغیرهای محیطی قابل تغییر باشند.
 
+**احراز هویت و مجوزدهی (Authentication & Authorization)**
+- سیستم باید از احراز هویت مبتنی بر کلید API (API Key) با هدر `X-API-Key` پشتیبانی کند.
+- سه نقش کاربری باید تعریف شود: `admin` (دسترسی کامل)، `user` (خواندن و نوشتن)، `readonly` (فقط خواندن).
+- نقطه‌پایان‌های عمومی (health، docs، metrics) نباید نیاز به احراز هویت داشته باشند.
+- نقطه‌پایان‌های پیش‌بینی و مشاهده وضعیت نیاز به مجوز `read` دارند.
+- نقطه‌پایان‌های ارسال batch و جمع‌آوری داده آموزشی نیاز به مجوز `write` دارند.
+- نقطه‌پایان بازآموزی مدل نیاز به مجوز `retrain` دارد.
+
+**محدودیت نرخ درخواست (Rate Limiting)**
+- سیستم باید از محدودیت نرخ مبتنی بر Redis با الگوریتم پنجره لغزان (sliding window) استفاده کند.
+- محدودیت‌های نرخ باید بر اساس نقش کاربری متفاوت باشد: admin (۱۰۰۰ درخواست/دقیقه)، user (۱۰۰ درخواست/دقیقه)، readonly (۵۰ درخواست/دقیقه)، anonymous (۱۰ درخواست/دقیقه).
+- در صورت تجاوز از محدودیت، سیستم باید کد وضعیت HTTP 429 با هدرهای `X-RateLimit-*` و `Retry-After` برگرداند.
+- در صورت عدم دسترسی به Redis، سیستم باید در حالت fail-open عمل کند و درخواست‌ها را بپذیرد.
+
 **نگهداشت‌پذیری**
 - سیستم باید کاملاً کانتینری باشد و با یک دستور (`make up`) مستقر شود.
 - فایل `docker-compose.yml` و `Makefile` مدیریت وابستگی، ترتیب شروع و پلتفرم‌های Docker/Podman را یکپارچه می‌کنند.
@@ -350,6 +364,20 @@ The platform is a self-contained microservice architecture orchestrated via Dock
 - All sensitive data (DB passwords, S3 keys) must be passed via environment variables. Hardcoding is prohibited.
 - The reverse proxy shall redirect unencrypted traffic to TLS in production.
 - Default passwords for Grafana and Garage must be customizable via `.env`.
+
+**Authentication & Authorization**
+- The system shall support API key-based authentication using the `X-API-Key` header.
+- Three user roles shall be defined: `admin` (full access), `user` (read and write), `readonly` (read only).
+- Public endpoints (health, docs, metrics) shall not require authentication.
+- Prediction and status endpoints require `read` permission.
+- Batch submission and training data collection endpoints require `write` permission.
+- Model retraining endpoint requires `retrain` permission.
+
+**Rate Limiting**
+- The system shall implement Redis-backed rate limiting using a sliding window algorithm.
+- Rate limits shall be role-based: admin (1000 requests/minute), user (100 requests/minute), readonly (50 requests/minute), anonymous (10 requests/minute).
+- When rate limit is exceeded, the system shall return HTTP 429 with `X-RateLimit-*` headers and `Retry-After`.
+- When Redis is unavailable, the system shall operate in fail-open mode and allow requests.
 
 **Maintainability**
 - The system is fully containerized and deployable via a single command (`make up`).
