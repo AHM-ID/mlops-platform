@@ -21,6 +21,8 @@ The system follows a layered microservices pattern orchestrated via Docker Compo
 - **Experiment Tracking & Registry:** MLflow integration for parameter logging, metric tracking, and versioned artifact storage (`model.pkl`, `columns.pkl`).
 - **Conditional Model Promotion:** Automatic performance comparison (AUC, accuracy, F1) between newly trained models and the active Production version before stage transition.
 - **High-Performance Inference:** FastAPI REST API with Pydantic validation, real-time single predictions, and asynchronous batch processing.
+- **API Authentication & Authorization:** Role-based access control (admin, user, readonly) with API key authentication via `X-API-Key` header.
+- **Rate Limiting:** Redis-backed sliding window rate limiting with role-based limits (admin: 1000/min, user: 100/min, readonly: 50/min, anonymous: 10/min).
 - **Distributed Feature Caching:** Redis-backed caching with MD5 content hashing, configurable 3600s TTL, hit/miss tracking, and graceful degradation on Redis failure.
 - **Intelligent Retraining Queue:** Automatic prediction logging to Redis, batch extraction for incremental training, CSV fallback, and auto-clear on successful promotion.
 - **Comprehensive Observability:** Prometheus metrics scraping, structured JSON logging via async HTTP handler, Fluent-bit to Loki pipeline, and unified Grafana dashboards.
