@@ -8,9 +8,11 @@
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
     COMPOSE_CMD = podman-compose --env-file .env
+	CONTAINER_ENGINE = podman
     WAIT_CMD = sleep
 else
     COMPOSE_CMD = docker compose --env-file .env
+	CONTAINER_ENGINE = docker
     WAIT_CMD = timeout /t
 endif
 
@@ -29,7 +31,7 @@ help:
 
 build-base:
 	@echo "Building base image with registry args..."
-	podman build \
+	$(CONTAINER_ENGINE) build \
 		--build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY} \
 		--build-arg PIP_INDEX_URL=${PIP_INDEX_URL} \
 		--build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
