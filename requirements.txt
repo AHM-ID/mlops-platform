@@ -16,3 +16,6 @@ psutil
 python-multipart
 evidently==0.4.20
 pytest
+pytest-cov
+pytest-mock
+pytest-asyncio

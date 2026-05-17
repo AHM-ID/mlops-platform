@@ -1,8 +1,3 @@
-"""
-Predictions Router
-Handles real-time and async batch prediction requests with authentication
-"""
-
 from fastapi import APIRouter, HTTPException, status, Depends
 
 from api.schemas import (
@@ -22,10 +17,20 @@ logger = setup_logging("predictions_router")
 
 router = APIRouter()
 
-# Initialize services
-prediction_service = PredictionService()
-batch_service = BatchService()
+_prediction_service = None
+_batch_service = None
 
+def get_prediction_service():
+    global _prediction_service
+    if _prediction_service is None:
+        _prediction_service = PredictionService()
+    return _prediction_service
+
+def get_batch_service():
+    global _batch_service
+    if _batch_service is None:
+        _batch_service = BatchService()
+    return _batch_service
 
 @router.post(
     "/single",
@@ -38,7 +43,7 @@ async def predict_single(
     request: PredictionRequest, 
     role: str = Depends(require_read)
 ) -> PredictionResponse:
-    """Get a real-time prediction for a single customer record."""
+    prediction_service = get_prediction_service()
     try:
         logger.info(f"Single prediction request for customer: {request.customer_id} by role: {role}")
         
@@ -77,7 +82,7 @@ async def predict_batch(
     request: BatchPredictionRequest,
     role: str = Depends(require_write)
 ) -> BatchPredictionResponse:
-    """Submit a batch of customer records for asynchronous prediction."""
+    batch_service = get_batch_service()
     try:
         logger.info(
             f"Batch prediction request by role {role}: name={request.batch_name}, "
@@ -115,7 +120,7 @@ async def get_batch_status(
     batch_id: str,
     role: str = Depends(require_read)
 ):
-    """Get the current status of a batch prediction job."""
+    batch_service = get_batch_service()
     try:
         logger.info(f"Status check for batch: {batch_id} by role: {role}")
         status_info = batch_service.get_batch_status(batch_id)
@@ -147,7 +152,7 @@ async def get_batch_results(
     batch_id: str,
     role: str = Depends(require_read)
 ):
-    """Retrieve the results of a completed batch prediction job."""
+    batch_service = get_batch_service()
     try:
         logger.info(f"Results request for batch: {batch_id} by role: {role}")
         results = batch_service.get_batch_results(batch_id)
@@ -181,7 +186,6 @@ async def collect_training_data(
     actual_churn: int,
     role: str = Depends(require_write)
 ) -> CollectTrainingDataResponse:
-    """Collect training data for model retraining."""
     try:
         from shared.retrain_queue import RetrainQueueManager
         

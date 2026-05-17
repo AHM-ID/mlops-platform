@@ -1,0 +1,18 @@
+services:
+  unit-test:
+    image: mlops-platform-base:latest
+    command: sh -c "mkdir -p /tmp/prometheus-test && pytest tests/ -v -m 'not integration' --tb=short"
+    environment:
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-test
+      - TESTING=true
+      - RATE_LIMIT_ENABLED=false
+    volumes:
+      - ./:/app:ro${SELINUX_RO}
+    networks:
+      - mlops-network
+    restart: "no"
+
+networks:
+  mlops-network:
+    external: true
+    name: mlops-platform-network

@@ -1,8 +1,10 @@
-# Python cache
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# venv
+# Virtual env
 .venv/
 venv/
 
@@ -14,9 +16,6 @@ mlruns/
 # git
 .git/
 
-# tests
-tests/
-
 # logs
 *.log
 
@@ -27,5 +26,8 @@ tests/
 # OS
 .DS_Store
 
-# Tests
-tests/*
+# Tests cache
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/

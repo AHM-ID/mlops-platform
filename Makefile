@@ -3,7 +3,7 @@
 # Works on Linux (Podman) and Windows (Docker)
 # ============================================
 
-.PHONY: help build-base up down down-v restart logs ps test test-unit test-integration
+.PHONY: help build-base up down down-v restart logs ps unit-test
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
@@ -28,6 +28,7 @@ help:
 	@echo "  make restart          - Restart API and Nginx"
 	@echo "  make logs [SERVICE]   - Show logs (usage: make logs SERVICE=api)"
 	@echo "  make ps               - Show service status"
+	@echo "  make unit-test        - Run unit tests"
 
 build-base:
 	@echo "Building base image with registry args..."
@@ -48,7 +49,7 @@ up: build-base
 	@echo "Waiting for mlflow..."
 	$(WAIT_CMD) 30
 	@echo "Starting loggers..."
-	$(COMPOSE_CMD) up -d fluent-bit loki
+	$(COMPOSE_CMD) up -d loki fluent-bit
 	@echo "Waiting for loggers to be healthy..."
 	$(WAIT_CMD) 10
 	@echo "Training initial model..."
@@ -91,14 +92,6 @@ endif
 ps:
 	$(COMPOSE_CMD) ps
 
-test:
-	@echo "Running all tests..."
-	cd scripts && bash run_tests.sh
-
-test-unit:
+unit-test:
 	@echo "Running unit tests..."
-	pytest tests/ -m "not integration" -v
-
-test-integration:
-	@echo "Running integration tests..."
-	pytest tests/ -m integration -v
+	$(COMPOSE_CMD) -f docker-compose.test.yml run --rm unit-test

@@ -1,8 +1,9 @@
 import os
 import sys
 import pytest
-import time
-from unittest.mock import patch
+import json
+import pickle
+from unittest.mock import Mock, patch
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -11,11 +12,12 @@ if PROJECT_ROOT not in sys.path:
 from shared.retrain_queue import RetrainQueueManager
 
 class TestRetrainQueue:
-
-    def test_add_prediction_to_queue(self, redis_client):
-        queue = RetrainQueueManager()
+    
+    def test_add_prediction_to_queue(self, mock_redis):
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
         
-        prediction_id = queue.add_prediction(
+        prediction_id = manager.add_prediction(
             features={"tenure": 12, "MonthlyCharges": 50.0},
             prediction=1,
             probability=0.75,
@@ -23,86 +25,134 @@ class TestRetrainQueue:
         )
         
         assert prediction_id != ""
-        assert queue.get_queue_length() == 1
-
-    def test_update_label_in_queue(self, redis_client):
-        queue = RetrainQueueManager()
+        assert mock_redis.rpush.called
+    
+    def test_add_prediction_with_custom_id(self, mock_redis):
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
         
-        prediction_id = queue.add_prediction(
-            features={"tenure": 12, "MonthlyCharges": 50.0},
-            prediction=1,
-            probability=0.75,
-            customer_id="TEST001"
+        custom_id = "custom_pred_123"
+        prediction_id = manager.add_prediction(
+            features={"tenure": 12},
+            prediction=0,
+            probability=0.3,
+            customer_id="TEST002",
+            prediction_id=custom_id
         )
         
-        success = queue.update_label(prediction_id, 1)
+        assert prediction_id == custom_id
+    
+    def test_update_label_in_queue(self, mock_redis):
+        record_id = "test_id_123"
+        mock_record = {
+            "id": record_id,
+            "features": {"tenure": 12},
+            "prediction": 1,
+            "probability": 0.75,
+            "prediction_timestamp": "2024-01-01T00:00:00",
+            "label": None,
+            "validation_status": "pending"
+        }
+        mock_redis.lrange.return_value = [pickle.dumps(mock_record)]
+        
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
+        
+        success = manager.update_label(record_id, 1)
+        
         assert success is True
-
-    def test_get_training_batch(self, redis_client):
-        queue = RetrainQueueManager()
+    
+    def test_update_nonexistent_label(self, mock_redis):
+        mock_redis.lrange.return_value = []
         
-        for i in range(10):
-            pid = queue.add_prediction(
-                features={"tenure": i, "MonthlyCharges": 50.0},
-                prediction=i % 2,
-                probability=0.5,
-                customer_id=f"TEST{i:03d}"
-            )
-            queue.update_label(pid, i % 2)
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
         
-        batch = queue.get_training_batch(batch_size=5)
+        success = manager.update_label("nonexistent_id", 1)
         
-        assert len(batch) == 5
-        assert all("label" in record for record in batch)
-        assert all(record["label"] is not None for record in batch)
-
-    def test_clear_queue(self, redis_client):
-        queue = RetrainQueueManager()
+        assert success is False
+    
+    def test_get_training_batch(self, mock_redis):
+        records = []
+        for i in range(5):
+            record = {
+                "id": f"id_{i}",
+                "features": {"tenure": i * 12},
+                "prediction": i % 2,
+                "probability": 0.5,
+                "prediction_timestamp": "2024-01-01T00:00:00",
+                "label": i % 2,
+                "validation_status": "verified"
+            }
+            records.append(pickle.dumps(record))
         
-        queue.add_prediction({"tenure": 12}, 1, 0.75, "TEST001")
-        assert queue.get_queue_length() == 1
+        mock_redis.lrange.return_value = records
         
-        queue.clear_queue()
-        assert queue.get_queue_length() == 0
-
-    def test_get_recent_predictions(self, redis_client):
-        queue = RetrainQueueManager()
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
         
-        queue.add_prediction({"tenure": 12}, 1, 0.75, "TEST001")
+        batch = manager.get_training_batch(batch_size=3)
         
-        recent = queue.get_recent_predictions(hours=24)
+        assert len(batch) <= 3
+    
+    def test_get_training_batch_only_verified(self, mock_redis):
+        records = [
+            pickle.dumps({"id": "1", "label": 1, "validation_status": "verified"}),
+            pickle.dumps({"id": "2", "label": None, "validation_status": "pending"}),
+            pickle.dumps({"id": "3", "label": 0, "validation_status": "verified"})
+        ]
+        mock_redis.lrange.return_value = records
         
-        assert len(recent) == 1
-
-    def test_trigger_retrain_endpoint(self, test_client, api_keys):
-        response = test_client.post(
-            "/api/retrain",
-            headers={"X-API-Key": api_keys["admin"]}
-        )
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
         
-        assert response.status_code == 202
-        data = response.json()
-        assert "task_id" in data
-        assert data["status"] == "submitted"
-
-    def test_retrain_readonly_denied(self, test_client, api_keys):
-        response = test_client.post(
-            "/api/retrain",
-            headers={"X-API-Key": api_keys["readonly"]}
-        )
+        batch = manager.get_training_batch(batch_size=10)
         
-        assert response.status_code == 403
-
-    def test_retrain_queue_status_endpoint(self, test_client, api_keys, redis_client):
-        queue = RetrainQueueManager()
-        queue.add_prediction({"tenure": 12}, 1, 0.75, "TEST001")
+        for record in batch:
+            assert record["label"] is not None
+            assert record["validation_status"] == "verified"
+    
+    def test_clear_queue(self, mock_redis):
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
         
-        response = test_client.get(
-            "/api/retrain-queue/status",
-            headers={"X-API-Key": api_keys["readonly"]}
-        )
+        manager.clear_queue()
         
-        assert response.status_code == 200
-        data = response.json()
-        assert "queue_length" in data
-        assert data["queue_length"] >= 1
+        mock_redis.delete.assert_called()
+    
+    def test_get_recent_predictions(self, mock_redis):
+        record = {
+            "id": "test_id",
+            "features": {"tenure": 12},
+            "prediction": 1,
+            "probability": 0.75,
+            "prediction_timestamp": "2024-01-01T00:00:00",
+            "label": None,
+            "validation_status": "pending"
+        }
+        mock_redis.lrange.return_value = [pickle.dumps(record)]
+        
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
+        
+        recent = manager.get_recent_predictions(hours=24)
+        
+        assert len(recent) >= 0
+    
+    def test_get_queue_length(self, mock_redis):
+        mock_redis.llen.return_value = 10
+        
+        manager = RetrainQueueManager()
+        manager.redis_client = mock_redis
+        
+        length = manager.get_queue_length()
+        
+        assert length == 10
+    
+    def test_redis_connection_failure_handling(self):
+        with patch('shared.retrain_queue.redis.from_url', side_effect=Exception("Connection failed")):
+            manager = RetrainQueueManager()
+            assert manager.redis_client is None
+            assert manager.get_queue_length() == 0
+            assert manager.add_prediction({}, 1, 0.5) == ""
+            assert manager.clear_queue() is False

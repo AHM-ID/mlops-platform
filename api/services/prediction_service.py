@@ -1,9 +1,10 @@
-from typing import Tuple
+import os
 import uuid
 import time
 import mlflow
 import mlflow.pyfunc
 import pandas as pd
+from typing import Tuple
 from api.schemas import PredictionRequest
 from shared.config import MODEL_NAME, MLFLOW_TRACKING_URI, REDIS_URL, CACHE_TTL_SECONDS, COLUMNS_FILE
 from shared.metrics import PREDICTION_LATENCY, MODEL_ACTIVE_VERSION, MODEL_AUC_SCORE, PREDICTION_OUTCOME_TOTAL
@@ -20,7 +21,10 @@ class PredictionService:
         self._model = None
         self._columns = None
         self._model_version = None
-        self._load_model()
+        if os.getenv("TESTING", "false").lower() != "true":
+            self._load_model()
+        else:
+            logger.info("Running in test mode, model loading skipped")
 
     def _load_model(self):
         try:
