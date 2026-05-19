@@ -1,23 +1,20 @@
 # GitLab CI — mocked unit tests (no live platform stack).
 #
-# If CI still hits mirror-pypi.runflare.com, update GitLab project variables:
-#   Settings → CI/CD → Variables
-#   PIP_INDEX_URL  = https://package-mirror.liara.ir/repository/pypi/simple
-#   PIP_TRUSTED_HOST = package-mirror.liara.ir
-#   (delete or override any runflare / devneeds URLs)
+# Project-level PIP_INDEX_URL on shared runners may point to runflare (402).
+# Pip commands below use hardcoded Liara URLs and ignore runner pip.conf.
+# Also remove runflare vars: Settings → CI/CD → Variables.
 
 stages:
   - test
   - build
   - deploy
 
-# Liara mirrors (defaults; job-level variables below take precedence over project vars)
 variables:
   DOCKER_REGISTRY: docker.arvancloud.ir
-  PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
-  PIP_TRUSTED_HOST: package-mirror.liara.ir
-  APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
-  APT_MIRROR_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
+  LIARA_PIP_INDEX: https://package-mirror.liara.ir/repository/pypi/simple
+  LIARA_PIP_HOST: package-mirror.liara.ir
+  LIARA_APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  LIARA_APT_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
   TESTING: "true"
   RATE_LIMIT_ENABLED: "false"
   PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
@@ -31,20 +28,24 @@ variables:
 test:
   stage: test
   image: python:3.11.9-slim
-  variables:
-    # Force Liara PyPI per job (overrides project-level runflare variables)
-    PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
-    PIP_TRUSTED_HOST: package-mirror.liara.ir
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
   before_script:
     - mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
-    - export PIP_INDEX_URL="${PIP_INDEX_URL}"
-    - export PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}"
+    # Bypass project/runner PIP_INDEX_URL (often runflare) and any pip.conf on the runner
+    - unset PIP_INDEX_URL PIP_TRUSTED_HOST PIP_EXTRA_INDEX_URL || true
+    - export PIP_CONFIG_FILE=/dev/null
     - export PIP_NO_CACHE_DIR=1
-    - python -m pip install --upgrade pip --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL"
-    - python -m pip install --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL" -r requirements.txt
+    - |
+      python -m pip install --upgrade pip \
+        --trusted-host package-mirror.liara.ir \
+        -i https://package-mirror.liara.ir/repository/pypi/simple
+    - |
+      python -m pip install \
+        --trusted-host package-mirror.liara.ir \
+        -i https://package-mirror.liara.ir/repository/pypi/simple \
+        -r requirements.txt
   script:
     - python -m pytest tests/ -v -m "not integration" --tb=short
 
@@ -57,17 +58,13 @@ build:
     - if: $CI_COMMIT_BRANCH == "main"
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
-    PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
-    PIP_TRUSTED_HOST: package-mirror.liara.ir
-    APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
-    APT_MIRROR_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
   script:
     - docker build
         --build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY}
-        --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}
-        --build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
-        --build-arg APT_MIRROR=${APT_MIRROR}
-        --build-arg APT_MIRROR_SECURITY=${APT_MIRROR_SECURITY}
+        --build-arg PIP_INDEX_URL=${LIARA_PIP_INDEX}
+        --build-arg PIP_TRUSTED_HOST=${LIARA_PIP_HOST}
+        --build-arg APT_MIRROR=${LIARA_APT_MIRROR}
+        --build-arg APT_MIRROR_SECURITY=${LIARA_APT_SECURITY}
         -t mlops-platform-base:${CI_COMMIT_SHORT_SHA} .
         -t mlops-platform-base:latest .
 
