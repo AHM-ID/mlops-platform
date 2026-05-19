@@ -1,5 +1,5 @@
 # GitLab CI — unit tests with mocks (no live stack).
-# PyPI: Liara mirror — https://package-mirror.liara.ir/repository/pypi/simple
+# PyPI: devneeds mirror — https://pypi.devneeds.ir/simple/
 # Delete runflare PIP_* from Settings → CI/CD → Variables if still set.
 
 stages:
@@ -9,10 +9,10 @@ stages:
 
 variables:
   DOCKER_REGISTRY: docker.arvancloud.ir
-  PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
-  PIP_TRUSTED_HOST: package-mirror.liara.ir
-  CI_PIP_INDEX: https://package-mirror.liara.ir/repository/pypi/simple
-  CI_PIP_TRUSTED: package-mirror.liara.ir
+  PIP_INDEX_URL: https://pypi.devneeds.ir/simple/
+  PIP_TRUSTED_HOST: pypi.devneeds.ir
+  CI_PIP_INDEX: https://pypi.devneeds.ir/simple/
+  CI_PIP_TRUSTED: pypi.devneeds.ir
   LIARA_APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
   LIARA_APT_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -32,7 +32,7 @@ test:
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
   timeout: 45m
   cache:
-    key: pip-py311-liara
+    key: pip-py311-devneeds
     paths:
       - .cache/pip
   rules:

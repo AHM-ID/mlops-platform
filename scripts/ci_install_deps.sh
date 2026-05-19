@@ -1,6 +1,6 @@
 #!/bin/sh
-# GitLab CI: staged pip install via Liara PyPI mirror (see Liara docs).
-# https://package-mirror.liara.ir/repository/pypi/simple
+# GitLab CI: staged pip install via devneeds PyPI mirror.
+# https://pypi.devneeds.ir/simple/
 set -eu
 
 unset PIP_INDEX_URL PIP_TRUSTED_HOST PIP_EXTRA_INDEX_URL || true
@@ -9,8 +9,8 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_PROGRESS_BAR=on
 export PIP_DEFAULT_TIMEOUT=300
 
-INDEX="${CI_PIP_INDEX:-https://package-mirror.liara.ir/repository/pypi/simple}"
-TRUSTED="${CI_PIP_TRUSTED:-package-mirror.liara.ir}"
+INDEX="${CI_PIP_INDEX:-https://pypi.devneeds.ir/simple/}"
+TRUSTED="${CI_PIP_TRUSTED:-pypi.devneeds.ir}"
 
 log() { echo ""; echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
 
@@ -22,7 +22,7 @@ pip_install() {
     "$@"
 }
 
-log "Using Liara PyPI mirror: ${INDEX}"
+log "Using PyPI mirror: ${INDEX}"
 
 log "1/4 — pytest toolchain"
 pip_install \
@@ -40,4 +40,4 @@ pip_install "mlflow==2.9.2" "optuna==3.5.0" boto3
 log "4/4 — Evidently (largest; may take several minutes)"
 pip_install "evidently==0.4.20"
 
-log "All dependencies installed from Liara mirror"
+log "All dependencies installed"
