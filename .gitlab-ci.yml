@@ -1,0 +1,62 @@
+# Active GitLab CI pipeline (mocked unit tests — no live platform stack required).
+# CI/CD variables in GitLab project settings (optional overrides):
+#   DOCKER_REGISTRY, PIP_INDEX_URL, PIP_TRUSTED_HOST
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_REGISTRY: docker.io
+  PIP_INDEX_URL: https://pypi.org/simple
+  PIP_TRUSTED_HOST: pypi.org
+  TESTING: "true"
+  RATE_LIMIT_ENABLED: "false"
+  PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
+  MLFLOW_TRACKING_URI: http://localhost:5000
+  REDIS_URL: redis://localhost:6379/0
+  POSTGRES_HOST: localhost
+  API_KEY_ADMIN: admin-secret-key-change-in-production
+  API_KEY_USER: user-secret-key-change-in-production
+  API_KEY_READONLY: readonly-secret-key-change-in-production
+
+test:
+  stage: test
+  image: python:3.11.9-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+  before_script:
+    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
+    - python -m pip install --upgrade pip
+    - python -m pip install --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL" -r requirements.txt
+  script:
+    - python -m pytest tests/ -v -m "not integration" --tb=short
+
+build:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker build
+        --build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY}
+        --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}
+        --build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+        -t mlops-platform-base:${CI_COMMIT_SHORT_SHA} .
+        -t mlops-platform-base:latest .
+
+deploy:
+  stage: deploy
+  image: bitnami/kubectl:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - kubectl apply -f infra/k8s/
+  needs:
+    - build
