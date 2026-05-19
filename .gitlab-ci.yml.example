@@ -6,13 +6,21 @@ stages:
 test:
   stage: test
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
+  variables:
+    TESTING: "true"
+    RATE_LIMIT_ENABLED: "false"
+    PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
+    MLFLOW_TRACKING_URI: http://localhost:5000
+    REDIS_URL: redis://localhost:6379/0
+    POSTGRES_HOST: localhost
+    API_KEY_ADMIN: admin-secret-key-change-in-production
+    API_KEY_USER: user-secret-key-change-in-production
+    API_KEY_READONLY: readonly-secret-key-change-in-production
   before_script:
-    - which python || which python3 || echo "Python not found"
-    - python --version || python3 --version || echo "Cannot get Python version"
-  script:
+    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
     - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} -r requirements.txt
-    - python -m pip install --trusted-host ${PIP_TRUSTED_HOST} -i ${PIP_INDEX_URL} pytest
-    - python -m pytest
+  script:
+    - python -m pytest tests/ -v -m "not integration" --tb=short
 
 build:
   stage: build

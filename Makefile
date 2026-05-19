@@ -3,7 +3,7 @@
 # Works on Linux (Podman) and Windows (Docker)
 # ============================================
 
-.PHONY: help build-base up down down-v restart logs ps unit-test
+.PHONY: help build-base up down down-v restart logs ps test unit-test
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
@@ -28,7 +28,7 @@ help:
 	@echo "  make restart          - Restart API and Nginx"
 	@echo "  make logs [SERVICE]   - Show logs (usage: make logs SERVICE=api)"
 	@echo "  make ps               - Show service status"
-	@echo "  make unit-test        - Run unit tests"
+	@echo "  make test / unit-test - Run unit tests (no stack required)"
 
 build-base:
 	@echo "Building base image with registry args..."
@@ -92,6 +92,7 @@ endif
 ps:
 	$(COMPOSE_CMD) ps
 
-unit-test:
-	@echo "Running unit tests..."
+test unit-test:
+	@echo "Running unit tests (mocked; platform stack not required)..."
+	$(COMPOSE_CMD) -f docker-compose.test.yml build unit-test
 	$(COMPOSE_CMD) -f docker-compose.test.yml run --rm unit-test

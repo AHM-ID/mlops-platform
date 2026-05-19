@@ -1,83 +1,114 @@
+"""
+Pytest configuration for isolated unit tests.
+
+No live Postgres, Redis, MLflow, or other platform services are required.
+External I/O is mocked at the client boundary (redis.from_url, MlflowClient, etc.).
+"""
+
+from __future__ import annotations
+
 import os
 import sys
-import pytest
 import tempfile
-from unittest.mock import Mock, patch, MagicMock
-from fastapi.testclient import TestClient
+from contextlib import ExitStack
+from unittest.mock import Mock, patch
+
+import pytest
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-os.environ.setdefault("TESTING", "true")
-os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
-os.environ.setdefault("MLFLOW_TRACKING_URI", "http://localhost:5000")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
-os.environ.setdefault("POSTGRES_HOST", "localhost")
-os.environ.setdefault("POSTGRES_PORT", "5432")
-os.environ.setdefault("POSTGRES_USER", "admin")
-os.environ.setdefault("POSTGRES_PASSWORD", "admin")
-os.environ.setdefault("POSTGRES_DB", "mlops")
-os.environ.setdefault("MODEL_NAME", "churn_model")
-os.environ.setdefault("DATA_PATH", "data/churn.csv")
 
-temp_dir = tempfile.mkdtemp()
-os.environ["PROMETHEUS_MULTIPROC_DIR"] = temp_dir
+def _configure_test_env() -> None:
+    os.environ.setdefault("TESTING", "true")
+    os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+    os.environ.setdefault("MLFLOW_TRACKING_URI", "http://localhost:5000")
+    os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+    os.environ.setdefault("POSTGRES_HOST", "localhost")
+    os.environ.setdefault("POSTGRES_PORT", "5432")
+    os.environ.setdefault("POSTGRES_USER", "admin")
+    os.environ.setdefault("POSTGRES_PASSWORD", "admin")
+    os.environ.setdefault("POSTGRES_DB", "mlops")
+    os.environ.setdefault("MODEL_NAME", "churn_model")
+    os.environ.setdefault("DATA_PATH", "data/churn.csv")
+    os.environ.setdefault("API_KEY_ADMIN", "admin-secret-key-change-in-production")
+    os.environ.setdefault("API_KEY_USER", "user-secret-key-change-in-production")
+    os.environ.setdefault("API_KEY_READONLY", "readonly-secret-key-change-in-production")
 
-mock_mlflow_patcher = patch('mlflow.tracking.MlflowClient')
-mock_mlflow_client = mock_mlflow_patcher.start()
+    prometheus_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not prometheus_dir:
+        prometheus_dir = tempfile.mkdtemp(prefix="prometheus-test-")
+        os.environ["PROMETHEUS_MULTIPROC_DIR"] = prometheus_dir
 
-mock_client_instance = Mock()
-mock_version = Mock()
-mock_version.version = "1"
-mock_version.run_id = "test_run_id_123"
-mock_version.current_stage = "Production"
-mock_version.name = "churn_model"
-mock_version.creation_timestamp = 1609459200000
-mock_version.last_updated_timestamp = 1609459200000
-mock_client_instance.get_latest_versions.return_value = [mock_version]
 
-mock_run = Mock()
-mock_run.data.metrics = {"auc": 0.85, "accuracy": 0.82, "f1": 0.80}
-mock_client_instance.get_run.return_value = mock_run
-mock_client_instance.search_model_versions.return_value = [mock_version]
+_configure_test_env()
 
-mock_mlflow_client.return_value = mock_client_instance
 
-mock_load_patcher = patch('mlflow.pyfunc.load_model')
-mock_load_model = mock_load_patcher.start()
-mock_model = Mock()
-mock_model.predict.return_value = [0]
-mock_model.predict_proba.return_value = [[0.3, 0.7]]
-mock_load_model.return_value = mock_model
+def _build_mlflow_mocks() -> tuple[Mock, Mock]:
+    mock_client_instance = Mock()
+    mock_version = Mock()
+    mock_version.version = "1"
+    mock_version.run_id = "test_run_id_123"
+    mock_version.current_stage = "Production"
+    mock_version.name = "churn_model"
+    mock_version.creation_timestamp = 1609459200000
+    mock_version.last_updated_timestamp = 1609459200000
+    mock_client_instance.get_latest_versions.return_value = [mock_version]
 
-patch('mlflow.set_tracking_uri', Mock()).start()
+    mock_run = Mock()
+    mock_run.data.metrics = {"auc": 0.85, "accuracy": 0.82, "f1": 0.80}
+    mock_client_instance.get_run.return_value = mock_run
+    mock_client_instance.search_model_versions.return_value = [mock_version]
 
-mock_redis_patcher = patch('redis.from_url')
-mock_redis_client = mock_redis_patcher.start()
-mock_redis_instance = Mock()
-mock_redis_instance.ping.return_value = True
-mock_redis_instance.rpush.return_value = 1
-mock_redis_instance.llen.return_value = 0
-mock_redis_instance.lrange.return_value = []
-mock_redis_instance.get.return_value = None
-mock_redis_instance.setex.return_value = True
-mock_redis_instance.delete.return_value = 1
-mock_redis_client.return_value = mock_redis_instance
+    mock_model = Mock()
+    mock_model.predict.return_value = [0]
+    mock_model.predict_proba.return_value = [[0.3, 0.7]]
 
-from api.main import app
+    return mock_client_instance, mock_model
 
-def cleanup_patches():
-    mock_mlflow_patcher.stop()
-    mock_load_patcher.stop()
-    mock_redis_patcher.stop()
 
-import atexit
-atexit.register(cleanup_patches)
+def _build_redis_mock() -> Mock:
+    mock_redis_instance = Mock()
+    mock_redis_instance.ping.return_value = True
+    mock_redis_instance.rpush.return_value = 1
+    mock_redis_instance.llen.return_value = 0
+    mock_redis_instance.lrange.return_value = []
+    mock_redis_instance.get.return_value = None
+    mock_redis_instance.setex.return_value = True
+    mock_redis_instance.delete.return_value = 1
+    mock_redis_instance.pipeline.return_value = mock_redis_instance
+    mock_redis_instance.execute.return_value = []
+    return mock_redis_instance
+
 
 @pytest.fixture(scope="session")
-def test_client():
-    return TestClient(app)
+def mock_redis(_mock_external_services) -> Mock:
+    return _mock_state["redis"]
+
+
+@pytest.fixture(scope="session")
+def mock_mlflow(_mock_external_services) -> Mock:
+    return _mock_state["mlflow_model"]
+
+
+@pytest.fixture(scope="session")
+def app(_mock_external_services):
+    """Load FastAPI app only when a test needs it (avoids heavy import for all 66 tests)."""
+    if "app" not in _mock_state:
+        from api.main import app as fastapi_app
+
+        _mock_state["app"] = fastapi_app
+    return _mock_state["app"]
+
+
+@pytest.fixture(scope="session")
+def test_client(app):
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        yield client
+
 
 @pytest.fixture(scope="session")
 def sample_prediction_request():
@@ -88,8 +119,9 @@ def sample_prediction_request():
         "TotalCharges": 1814.0,
         "Contract": "Two year",
         "InternetService": "Fiber optic",
-        "PaymentMethod": "Electronic check"
+        "PaymentMethod": "Electronic check",
     }
+
 
 @pytest.fixture(scope="session")
 def sample_batch_requests():
@@ -103,25 +135,57 @@ def sample_batch_requests():
                 "TotalCharges": (50.0 + i) * (i % 72) if (i % 72) > 0 else 50.0,
                 "Contract": ["Month-to-month", "One year", "Two year"][i % 3],
                 "InternetService": ["DSL", "Fiber optic", "No"][i % 3],
-                "PaymentMethod": ["Electronic check", "Mailed check", "Bank transfer (automatic)", "Credit card (automatic)"][i % 4]
+                "PaymentMethod": [
+                    "Electronic check",
+                    "Mailed check",
+                    "Bank transfer (automatic)",
+                    "Credit card (automatic)",
+                ][i % 4],
             }
             for i in range(10)
-        ]
+        ],
     }
+
 
 @pytest.fixture(scope="session")
 def api_keys():
     return {
-        "admin": "admin-secret-key-change-in-production",
-        "user": "user-secret-key-change-in-production",
-        "readonly": "readonly-secret-key-change-in-production",
-        "invalid": "invalid-key"
+        "admin": os.environ["API_KEY_ADMIN"],
+        "user": os.environ["API_KEY_USER"],
+        "readonly": os.environ["API_KEY_READONLY"],
+        "invalid": "invalid-key",
     }
 
-@pytest.fixture
-def mock_redis():
-    return mock_redis_instance
 
-@pytest.fixture
-def mock_mlflow():
-    return mock_model
+_mock_state: dict = {}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _mock_external_services():
+    """
+    Session-wide mocks so imports and tests never open real network connections.
+    """
+    mock_client_instance, mock_model = _build_mlflow_mocks()
+    mock_redis_instance = _build_redis_mock()
+
+    stack = ExitStack()
+    stack.enter_context(patch("redis.from_url", return_value=mock_redis_instance))
+    stack.enter_context(
+        patch("mlflow.tracking.MlflowClient", return_value=mock_client_instance)
+    )
+    stack.enter_context(patch("mlflow.pyfunc.load_model", return_value=mock_model))
+    stack.enter_context(patch("mlflow.set_tracking_uri"))
+
+    _mock_state["redis"] = mock_redis_instance
+    _mock_state["mlflow_model"] = mock_model
+
+    yield
+
+    stack.close()
+    _mock_state.clear()
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if "integration" not in item.keywords:
+            item.add_marker(pytest.mark.unit)
