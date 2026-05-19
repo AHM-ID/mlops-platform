@@ -1,5 +1,5 @@
-# GitLab CI — mocked unit tests (no live platform stack).
-# Shared K8s runners: pip via PyPI.org (Liara often slow/hangs). Docker build uses Liara.
+# GitLab CI — unit tests with mocks (no live stack).
+# First pipeline run: pip may take 10–20 min (mlflow + evidently). Later runs use cache.
 
 stages:
   - test
@@ -12,6 +12,9 @@ variables:
   LIARA_PIP_HOST: package-mirror.liara.ir
   LIARA_APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
   LIARA_APT_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
+  # PyPI.org from shared K8s runners; override in CI variables if needed
+  CI_PIP_INDEX: https://pypi.org/simple
+  CI_PIP_TRUSTED: pypi.org files.pythonhosted.org
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   TESTING: "true"
@@ -26,9 +29,10 @@ variables:
 
 test:
   stage: test
-  image: python:3.11.9-slim
+  image: ${DOCKER_REGISTRY}/python:3.11.9-slim
+  timeout: 45m
   cache:
-    key: pip-py311-v1
+    key: pip-py311-v2
     paths:
       - .cache/pip
   rules:
@@ -43,7 +47,7 @@ test:
 
 build:
   stage: build
-  image: docker:24
+  image: ${DOCKER_REGISTRY}/docker:24
   services:
     - docker:24-dind
   rules:
@@ -62,7 +66,7 @@ build:
 
 deploy:
   stage: deploy
-  image: bitnami/kubectl:latest
+  image: ${DOCKER_REGISTRY}/bitnami/kubectl:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   script:

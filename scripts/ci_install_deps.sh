@@ -1,29 +1,42 @@
 #!/bin/sh
-# Install Python deps in GitLab CI. Shared K8s runners usually reach PyPI.org
-# faster than Iranian mirrors; Liara is used as fallback for local/docker builds.
+# GitLab CI: staged pip install with visible progress (avoids "silent hang" in logs).
 set -eu
 
 unset PIP_INDEX_URL PIP_TRUSTED_HOST PIP_EXTRA_INDEX_URL || true
 export PIP_CONFIG_FILE=/dev/null
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_PROGRESS_BAR=on
+export PIP_DEFAULT_TIMEOUT=180
+
+INDEX="${CI_PIP_INDEX:-https://pypi.org/simple}"
+TRUSTED="${CI_PIP_TRUSTED:-pypi.org files.pythonhosted.org}"
+
+log() { echo ""; echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
 
 pip_install() {
-  index="$1"
-  trusted="$2"
-  echo ">>> pip install -i ${index}"
   python -m pip install \
-    --default-timeout=180 \
     --retries 3 \
-    --trusted-host "${trusted}" \
-    -i "${index}" \
-    -r requirements.txt
+    --trusted-host ${TRUSTED} \
+    -i "${INDEX}" \
+    "$@"
 }
 
-if pip_install "https://pypi.org/simple" "pypi.org files.pythonhosted.org"; then
-  echo ">>> dependencies installed from PyPI.org"
-  exit 0
-fi
+log "Using index: ${INDEX}"
 
-echo ">>> PyPI.org failed, trying Liara mirror..."
-pip_install "https://package-mirror.liara.ir/repository/pypi/simple" "package-mirror.liara.ir"
-echo ">>> dependencies installed from Liara"
+log "1/4 — pytest toolchain"
+pip_install \
+  pytest pytest-cov pytest-mock pytest-asyncio \
+  python-json-logger==2.0.7 psutil python-multipart
+
+log "2/4 — API / data core"
+pip_install \
+  fastapi uvicorn pandas "numpy<2" "scikit-learn==1.3.2" joblib redis celery \
+  prometheus-client "psycopg2-binary==2.9.12"
+
+log "3/4 — MLflow + Optuna (large downloads)"
+pip_install "mlflow==2.9.2" "optuna==3.5.0" boto3
+
+log "4/4 — Evidently (largest; may take several minutes)"
+pip_install "evidently==0.4.20"
+
+log "All dependencies installed"
