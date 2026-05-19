@@ -7,34 +7,32 @@ variables:
   DOCKER_REGISTRY: docker.arvancloud.ir
   PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
   PIP_TRUSTED_HOST: package-mirror.liara.ir
+  CI_PIP_INDEX: https://package-mirror.liara.ir/repository/pypi/simple
+  CI_PIP_TRUSTED: package-mirror.liara.ir
   APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
   APT_MIRROR_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
   TESTING: "true"
   RATE_LIMIT_ENABLED: "false"
   PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
-  MLFLOW_TRACKING_URI: http://localhost:5000
-  REDIS_URL: redis://localhost:6379/0
-  POSTGRES_HOST: localhost
-  API_KEY_ADMIN: admin-secret-key-change-in-production
-  API_KEY_USER: user-secret-key-change-in-production
-  API_KEY_READONLY: readonly-secret-key-change-in-production
 
 test:
   stage: test
-  image: python:3.11.9-slim
-  variables:
-    PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
-    PIP_TRUSTED_HOST: package-mirror.liara.ir
+  image: ${DOCKER_REGISTRY}/python:3.11.9-slim
+  timeout: 45m
+  cache:
+    key: pip-py311-liara
+    paths:
+      - .cache/pip
   before_script:
-    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
-    - python -m pip install --upgrade pip --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL"
-    - python -m pip install --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL" -r requirements.txt
+    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR" .cache/pip
+    - chmod +x scripts/ci_install_deps.sh
+    - scripts/ci_install_deps.sh
   script:
     - python -m pytest tests/ -v -m "not integration" --tb=short
 
 build:
   stage: build
-  image: docker:24
+  image: ${DOCKER_REGISTRY}/docker:24
   services:
     - docker:24-dind
   script:
@@ -48,7 +46,7 @@ build:
 
 deploy:
   stage: deploy
-  image: bitnami/kubectl:latest
+  image: ${DOCKER_REGISTRY}/bitnami/kubectl:latest
   script:
     - kubectl apply -f infra/k8s/
   only:

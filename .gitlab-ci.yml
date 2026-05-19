@@ -1,5 +1,6 @@
 # GitLab CI — unit tests with mocks (no live stack).
-# First pipeline run: pip may take 10–20 min (mlflow + evidently). Later runs use cache.
+# PyPI: Liara mirror — https://package-mirror.liara.ir/repository/pypi/simple
+# Delete runflare PIP_* from Settings → CI/CD → Variables if still set.
 
 stages:
   - test
@@ -8,13 +9,12 @@ stages:
 
 variables:
   DOCKER_REGISTRY: docker.arvancloud.ir
-  LIARA_PIP_INDEX: https://package-mirror.liara.ir/repository/pypi/simple
-  LIARA_PIP_HOST: package-mirror.liara.ir
+  PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
+  PIP_TRUSTED_HOST: package-mirror.liara.ir
+  CI_PIP_INDEX: https://package-mirror.liara.ir/repository/pypi/simple
+  CI_PIP_TRUSTED: package-mirror.liara.ir
   LIARA_APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
   LIARA_APT_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
-  # PyPI.org from shared K8s runners; override in CI variables if needed
-  CI_PIP_INDEX: https://pypi.org/simple
-  CI_PIP_TRUSTED: pypi.org files.pythonhosted.org
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   TESTING: "true"
@@ -32,7 +32,7 @@ test:
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
   timeout: 45m
   cache:
-    key: pip-py311-v2
+    key: pip-py311-liara
     paths:
       - .cache/pip
   rules:
@@ -57,8 +57,8 @@ build:
   script:
     - docker build
         --build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY}
-        --build-arg PIP_INDEX_URL=${LIARA_PIP_INDEX}
-        --build-arg PIP_TRUSTED_HOST=${LIARA_PIP_HOST}
+        --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}
+        --build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
         --build-arg APT_MIRROR=${LIARA_APT_MIRROR}
         --build-arg APT_MIRROR_SECURITY=${LIARA_APT_SECURITY}
         -t mlops-platform-base:${CI_COMMIT_SHORT_SHA} .
