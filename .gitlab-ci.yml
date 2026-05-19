@@ -1,16 +1,23 @@
-# Active GitLab CI pipeline (mocked unit tests — no live platform stack required).
-# CI/CD variables in GitLab project settings (optional overrides):
-#   DOCKER_REGISTRY, PIP_INDEX_URL, PIP_TRUSTED_HOST
+# GitLab CI — mocked unit tests (no live platform stack).
+#
+# If CI still hits mirror-pypi.runflare.com, update GitLab project variables:
+#   Settings → CI/CD → Variables
+#   PIP_INDEX_URL  = https://package-mirror.liara.ir/repository/pypi/simple
+#   PIP_TRUSTED_HOST = package-mirror.liara.ir
+#   (delete or override any runflare / devneeds URLs)
 
 stages:
   - test
   - build
   - deploy
 
+# Liara mirrors (defaults; job-level variables below take precedence over project vars)
 variables:
-  DOCKER_REGISTRY: docker.io
-  PIP_INDEX_URL: https://pypi.org/simple
-  PIP_TRUSTED_HOST: pypi.org
+  DOCKER_REGISTRY: docker.arvancloud.ir
+  PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
+  PIP_TRUSTED_HOST: package-mirror.liara.ir
+  APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  APT_MIRROR_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
   TESTING: "true"
   RATE_LIMIT_ENABLED: "false"
   PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
@@ -24,12 +31,19 @@ variables:
 test:
   stage: test
   image: python:3.11.9-slim
+  variables:
+    # Force Liara PyPI per job (overrides project-level runflare variables)
+    PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
+    PIP_TRUSTED_HOST: package-mirror.liara.ir
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
   before_script:
     - mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
-    - python -m pip install --upgrade pip
+    - export PIP_INDEX_URL="${PIP_INDEX_URL}"
+    - export PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}"
+    - export PIP_NO_CACHE_DIR=1
+    - python -m pip install --upgrade pip --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL"
     - python -m pip install --trusted-host "$PIP_TRUSTED_HOST" -i "$PIP_INDEX_URL" -r requirements.txt
   script:
     - python -m pytest tests/ -v -m "not integration" --tb=short
@@ -43,11 +57,17 @@ build:
     - if: $CI_COMMIT_BRANCH == "main"
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
+    PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
+    PIP_TRUSTED_HOST: package-mirror.liara.ir
+    APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
+    APT_MIRROR_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
   script:
     - docker build
         --build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY}
         --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}
         --build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+        --build-arg APT_MIRROR=${APT_MIRROR}
+        --build-arg APT_MIRROR_SECURITY=${APT_MIRROR_SECURITY}
         -t mlops-platform-base:${CI_COMMIT_SHORT_SHA} .
         -t mlops-platform-base:latest .
 

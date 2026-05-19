@@ -9,8 +9,8 @@ services:
       dockerfile: Dockerfile
       args:
         DOCKER_REGISTRY: ${DOCKER_REGISTRY:-docker.arvancloud.ir}
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.devneeds.ir/simple/}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.devneeds.ir}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://package-mirror.liara.ir/repository/pypi/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-package-mirror.liara.ir}
         APT_MIRROR: ${APT_MIRROR:-http://linux-mirror.liara.ir/repository/debian}
         APT_MIRROR_SECURITY: ${APT_MIRROR_SECURITY:-http://linux-mirror.liara.ir/repository/debian-security}
     command: >
