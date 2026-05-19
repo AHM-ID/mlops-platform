@@ -37,12 +37,11 @@ test:
     - unset PIP_INDEX_URL PIP_TRUSTED_HOST PIP_EXTRA_INDEX_URL || true
     - export PIP_CONFIG_FILE=/dev/null
     - export PIP_NO_CACHE_DIR=1
-    - |
-      python -m pip install --upgrade pip \
-        --trusted-host package-mirror.liara.ir \
-        -i https://package-mirror.liara.ir/repository/pypi/simple
+    # Do not upgrade pip — slim image ships pip 24.x; upgrade often hangs on slow mirrors
     - |
       python -m pip install \
+        --default-timeout=300 \
+        --retries 5 \
         --trusted-host package-mirror.liara.ir \
         -i https://package-mirror.liara.ir/repository/pypi/simple \
         -r requirements.txt
