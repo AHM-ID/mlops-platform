@@ -1,8 +1,5 @@
 # GitLab CI — mocked unit tests (no live platform stack).
-#
-# Project-level PIP_INDEX_URL on shared runners may point to runflare (402).
-# Pip commands below use hardcoded Liara URLs and ignore runner pip.conf.
-# Also remove runflare vars: Settings → CI/CD → Variables.
+# Shared K8s runners: pip via PyPI.org (Liara often slow/hangs). Docker build uses Liara.
 
 stages:
   - test
@@ -15,6 +12,8 @@ variables:
   LIARA_PIP_HOST: package-mirror.liara.ir
   LIARA_APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
   LIARA_APT_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
   TESTING: "true"
   RATE_LIMIT_ENABLED: "false"
   PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
@@ -28,23 +27,17 @@ variables:
 test:
   stage: test
   image: python:3.11.9-slim
+  cache:
+    key: pip-py311-v1
+    paths:
+      - .cache/pip
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
   before_script:
-    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
-    # Bypass project/runner PIP_INDEX_URL (often runflare) and any pip.conf on the runner
-    - unset PIP_INDEX_URL PIP_TRUSTED_HOST PIP_EXTRA_INDEX_URL || true
-    - export PIP_CONFIG_FILE=/dev/null
-    - export PIP_NO_CACHE_DIR=1
-    # Do not upgrade pip — slim image ships pip 24.x; upgrade often hangs on slow mirrors
-    - |
-      python -m pip install \
-        --default-timeout=300 \
-        --retries 5 \
-        --trusted-host package-mirror.liara.ir \
-        -i https://package-mirror.liara.ir/repository/pypi/simple \
-        -r requirements.txt
+    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR" .cache/pip
+    - chmod +x scripts/ci_install_deps.sh
+    - scripts/ci_install_deps.sh
   script:
     - python -m pytest tests/ -v -m "not integration" --tb=short
 
