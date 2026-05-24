@@ -603,34 +603,55 @@ curl -G http://localhost:3100/loki/api/v1/query_range \
 
 ## Testing
 
-The platform includes a comprehensive test suite using `pytest`.
+Unit tests use `pytest` with **mocked** Redis, MLflow, and Postgres. **No running platform stack is required** (suitable for CI/CD).
 
-### Run All Tests
+### Run All Unit Tests
+
+**Windows (PowerShell):**
+
+```powershell
+.\scripts\run_tests.ps1
+```
+
+**Linux / macOS:**
+
+```bash
+./scripts/run_tests.sh
+```
+
+**Docker only** (rebuild image after changing test code — tests run from the image, not a live mount):
+
+```bash
+docker compose -f docker-compose.test.yml build unit-test
+docker compose -f docker-compose.test.yml run --rm unit-test
+```
+
+On Windows, bind-mounting the repo into the test container makes pytest very slow; the test compose file intentionally avoids that.
+
+**With Make (Linux):**
 
 ```bash
 make test
 ```
 
-### Run Specific Test Categories
-
-```bash
-make test-unit          # Unit tests only
-make test-integration   # Integration tests only
-```
-
 ### Run a Single Test File
 
 ```bash
-pytest tests/test_prediction_api.py -v
+pytest tests/test_auth.py -v
+# or
+.\scripts\run_tests.ps1 tests/test_auth.py -v
 ```
 
-The test suite covers:
-- Data quality and feature store.
-- Prediction API (single, batch, authentication, rate limiting, caching).
-- Drift detection endpoints and tasks.
-- Retrain queue and retraining pipeline.
-- Model registry API.
-- Rate limiter logic.
+### Integration Tests
+
+Tests marked `integration` need live services. They are excluded by default (`pytest.ini` uses `-m "not integration"`).
+
+The unit test suite covers:
+- Data quality and feature store
+- Authentication, rate limiting, and Pydantic schemas
+- Prediction, batch, and model services
+- Drift detection (Evidently, mocked data)
+- Retrain queue and Celery worker configuration
 
 ---
 
@@ -680,7 +701,8 @@ python trainer/train.py
 ### Running Tests in Docker
 
 ```bash
-docker-compose run --rm api pytest tests/ -v
+docker compose -f docker-compose.test.yml build unit-test
+docker compose -f docker-compose.test.yml run --rm unit-test
 ```
 
 ---

@@ -1,18 +1,31 @@
+# Standalone unit-test runner — no dependency on the main stack or external networks.
+# Usage: docker compose -f docker-compose.test.yml run --rm unit-test
+
 services:
   unit-test:
     image: mlops-platform-base:latest
-    command: sh -c "mkdir -p /tmp/prometheus-test && pytest tests/ -v -m 'not integration' --tb=short"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKER_REGISTRY: ${DOCKER_REGISTRY:-docker.arvancloud.ir}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://package-mirror.liara.ir/repository/pypi/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-package-mirror.liara.ir}
+        APT_MIRROR: ${APT_MIRROR:-http://linux-mirror.liara.ir/repository/debian}
+        APT_MIRROR_SECURITY: ${APT_MIRROR_SECURITY:-http://linux-mirror.liara.ir/repository/debian-security}
+    command: >
+      sh -c "mkdir -p /tmp/prometheus-test &&
+             pytest tests/ -v -m 'not integration' --tb=short"
     environment:
-      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-test
-      - TESTING=true
-      - RATE_LIMIT_ENABLED=false
-    volumes:
-      - ./:/app:ro${SELINUX_RO}
-    networks:
-      - mlops-network
+      TESTING: "true"
+      RATE_LIMIT_ENABLED: "false"
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
+      MLFLOW_TRACKING_URI: http://localhost:5000
+      REDIS_URL: redis://localhost:6379/0
+      POSTGRES_HOST: localhost
+      API_KEY_ADMIN: admin-secret-key-change-in-production
+      API_KEY_USER: user-secret-key-change-in-production
+      API_KEY_READONLY: readonly-secret-key-change-in-production
+    # Code comes from the image (COPY in Dockerfile). No bind-mount: on Windows,
+    # mounting ./ into /app makes every import very slow during pytest.
     restart: "no"
-
-networks:
-  mlops-network:
-    external: true
-    name: mlops-platform-network

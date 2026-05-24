@@ -1,0 +1,75 @@
+# GitLab CI — unit tests with mocks (no live stack).
+# PyPI: devneeds mirror — https://pypi.devneeds.ir/simple/
+# Delete runflare PIP_* from Settings → CI/CD → Variables if still set.
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_REGISTRY: docker.arvancloud.ir
+  PIP_INDEX_URL: https://pypi.devneeds.ir/simple/
+  PIP_TRUSTED_HOST: pypi.devneeds.ir
+  CI_PIP_INDEX: https://pypi.devneeds.ir/simple/
+  CI_PIP_TRUSTED: pypi.devneeds.ir
+  LIARA_APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  LIARA_APT_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  TESTING: "true"
+  RATE_LIMIT_ENABLED: "false"
+  PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-test
+  MLFLOW_TRACKING_URI: http://localhost:5000
+  REDIS_URL: redis://localhost:6379/0
+  POSTGRES_HOST: localhost
+  API_KEY_ADMIN: admin-secret-key-change-in-production
+  API_KEY_USER: user-secret-key-change-in-production
+  API_KEY_READONLY: readonly-secret-key-change-in-production
+
+test:
+  stage: test
+  image: ${DOCKER_REGISTRY}/python:3.11.9-slim
+  timeout: 45m
+  cache:
+    key: pip-py311-devneeds
+    paths:
+      - .cache/pip
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+  before_script:
+    - mkdir -p "$PROMETHEUS_MULTIPROC_DIR" .cache/pip
+    - chmod +x scripts/ci_install_deps.sh
+    - scripts/ci_install_deps.sh
+  script:
+    - python -m pytest tests/ -v -m "not integration" --tb=short
+
+build:
+  stage: build
+  image: ${DOCKER_REGISTRY}/docker:24
+  services:
+    - docker:24-dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker build
+        --build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY}
+        --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}
+        --build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+        --build-arg APT_MIRROR=${LIARA_APT_MIRROR}
+        --build-arg APT_MIRROR_SECURITY=${LIARA_APT_SECURITY}
+        -t mlops-platform-base:${CI_COMMIT_SHORT_SHA} .
+        -t mlops-platform-base:latest .
+
+deploy:
+  stage: deploy
+  image: ${DOCKER_REGISTRY}/bitnami/kubectl:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - kubectl apply -f infra/k8s/
+  needs:
+    - build
