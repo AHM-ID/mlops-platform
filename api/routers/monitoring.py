@@ -166,10 +166,10 @@ async def clear_feature_cache():
         logger.info("Feature cache cleared")
         return None
     except Exception as e:
-        logger.error(f"Failed to clear cache: {e}")
+        logger.error(f"Failed to clear cache: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to clear cache: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
     
 @router.get(
@@ -196,8 +196,8 @@ async def get_prediction_stats():
             "last_updated": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Failed to get prediction stats: {e}")
+        logger.error(f"Failed to get prediction stats: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get prediction stats: {str(e)}"
+            detail="Internal server error. Please try again later."
         )

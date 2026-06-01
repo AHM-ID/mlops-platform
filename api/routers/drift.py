@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi.concurrency import run_in_threadpool
 from typing import List, Dict, Any
 import pandas as pd
 import mlflow
@@ -68,12 +69,7 @@ def run_drift_report(current_data: pd.DataFrame, reference_data: pd.DataFrame) -
         "report_path": report_path
     }
 
-@router.post(
-    "/drift/check",
-    response_model=DriftReportResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Check data drift for current batch"
-)
+@router.post("/drift/check", response_model=DriftReportResponse, status_code=status.HTTP_200_OK)
 async def check_data_drift(
     request: BatchDriftRequest,
     role: str = Depends(require_read)
@@ -88,8 +84,8 @@ async def check_data_drift(
             "InternetService": r.InternetService,
             "PaymentMethod": r.PaymentMethod
         } for r in request.data])
-        reference_df = get_reference_data()
-        result = run_drift_report(current_df, reference_df)
+        reference_df = await run_in_threadpool(get_reference_data)
+        result = await run_in_threadpool(run_drift_report, current_df, reference_df)
         return DriftReportResponse(
             has_drift=result["has_drift"],
             drifted_columns=result["drifted_columns"],
@@ -97,19 +93,14 @@ async def check_data_drift(
             report_url=result["report_path"]
         )
     except Exception as e:
-        logger.error(f"Data drift check failed: {e}")
+        logger.error(f"Data drift check failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Data drift check failed: {str(e)}"
+            detail="Data drift check failed. Please try again later."
         )
 
-@router.post(
-    "/drift/auto-check",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Trigger automatic drift check from Redis"
-)
+@router.post("/drift/auto-check", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_auto_drift_check(role: str = Depends(require_read)):
-    """Trigger drift detection using stored predictions from Redis"""
     try:
         task = periodic_drift_check.delay(24, 100)
         logger.info(f"Auto drift check triggered, task_id={task.id}")
@@ -122,15 +113,10 @@ async def trigger_auto_drift_check(role: str = Depends(require_read)):
         logger.error(f"Failed to trigger auto drift check: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to trigger drift check: {str(e)}"
+            detail="Failed to trigger drift check. Service temporarily unavailable."
         )
 
-@router.get(
-    "/drift/status",
-    response_model=DriftStatusResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Get recent drift detection status"
-)
+@router.get("/drift/status", response_model=DriftStatusResponse, status_code=status.HTTP_200_OK)
 async def get_drift_status(role: str = Depends(require_read)) -> DriftStatusResponse:
     try:
         mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -153,15 +139,8 @@ async def get_drift_status(role: str = Depends(require_read)) -> DriftStatusResp
         logger.error(f"Failed to get drift status: {e}")
         return DriftStatusResponse(recent_checks=[], status="error")
 
-@router.post(
-    "/drift/trigger_retrain",
-    response_model=TriggerRetrainResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Trigger retraining if drift detected"
-)
-async def trigger_retrain_on_drift(
-    role: str = Depends(require_write)
-) -> TriggerRetrainResponse:
+@router.post("/drift/trigger_retrain", response_model=TriggerRetrainResponse, status_code=status.HTTP_202_ACCEPTED)
+async def trigger_retrain_on_drift(role: str = Depends(require_write)) -> TriggerRetrainResponse:
     try:
         from worker.celery_app import retrain
         task = retrain.delay()
@@ -175,5 +154,5 @@ async def trigger_retrain_on_drift(
         logger.error(f"Failed to trigger retrain: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to trigger retraining: {str(e)}"
+            detail="Failed to trigger retraining. Service temporarily unavailable."
         )

@@ -89,3 +89,16 @@ app.conf.beat_schedule = {
 
 import worker.batch_predictor
 import worker.drift_tasks
+
+app.conf.beat_schedule.update({
+    'update-cache-hit-rate': {
+        'task': 'update_cache_hit_rate',
+        'schedule': 60.0,
+    },
+})
+
+@app.task(name="update_cache_hit_rate")
+def update_cache_hit_rate_task():
+    from shared.feature_store import update_cache_hit_rate
+    update_cache_hit_rate()
+    return {"status": "updated"}

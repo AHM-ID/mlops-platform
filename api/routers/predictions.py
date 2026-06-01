@@ -67,7 +67,7 @@ async def predict_single(
         logger.error(f"Prediction failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Prediction service unavailable: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -107,7 +107,7 @@ async def predict_batch(
         logger.error(f"Batch submission failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Batch service unavailable: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -214,8 +214,8 @@ async def collect_training_data(
                 detail="Failed to collect training data"
             )
     except Exception as e:
-        logger.error(f"Failed to collect training data: {e}")
+        logger.error(f"Failed to collect training data: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error. Please try again later."
         )

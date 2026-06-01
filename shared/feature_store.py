@@ -1,9 +1,8 @@
-import redis
 import hashlib
 import pickle
 import pandas as pd
-from typing import Optional, Dict, Any, List
-from shared.config import REDIS_URL, CACHE_TTL_SECONDS
+from typing import Optional, Dict, Any, List, Tuple
+from shared.config import CACHE_TTL_SECONDS, get_redis_client
 from shared.logging import setup_logging
 
 logger = setup_logging("feature_store")
@@ -22,7 +21,7 @@ def _get_metrics():
     return _metrics
 
 try:
-    redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+    redis_client = get_redis_client(decode_responses=False)
     redis_client.ping()
     logger.info("Redis connection established for feature store")
 except Exception as e:
@@ -128,26 +127,14 @@ def clear_cache(model_version: str = None, batch_size: int = 100):
     except Exception as e:
         logger.error(f"Failed to clear cache: {e}")
 
-
 def clear_cache_for_model_version(model_version: str):
-    """
-    Clear all feature cache entries for a specific model version.
-    
-    This is called when a new model is promoted to production,
-    to invalidate old cached features.
-    
-    Args:
-        model_version: Version of the model whose cache should be cleared
-    """
     if redis_client is None:
         logger.warning("Redis not available, cannot clear cache for model version")
         return
-    
     try:
         pattern = f"features:*:v{model_version}"
         cursor = 0
         deleted = 0
-        
         while True:
             cursor, keys = redis_client.scan(cursor, match=pattern, count=100)
             if keys:
@@ -155,16 +142,19 @@ def clear_cache_for_model_version(model_version: str):
                 deleted += len(keys)
             if cursor == 0:
                 break
-        
         logger.info(f"Cleared {deleted} cache entries for model version v{model_version}")
-        
     except Exception as e:
         logger.error(f"Failed to clear cache for model version {model_version}: {e}")
 
+def get_or_prepare_features(df: pd.DataFrame, model_version: str, columns: List[str], ttl: int = None) -> pd.DataFrame:
+    cached = get_cached_features(df, model_version)
+    if cached is not None:
+        return cached
+    X = FeatureStore.prepare(df, training=False, columns=columns)
+    cache_features(df, X, ttl or CACHE_TTL_SECONDS, model_version)
+    return X
 
 class FeatureStore:
-    """Centralized feature transformation - single source of truth for both training and inference"""
-    
     @staticmethod
     def _drop_customer_id(df: pd.DataFrame) -> pd.DataFrame:
         if "customerID" in df.columns:
@@ -189,7 +179,7 @@ class FeatureStore:
         return pd.get_dummies(df, columns=categorical)
 
     @staticmethod
-    def _split_target(df: pd.DataFrame):
+    def _split_target(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, pd.Index]:
         y = df["Churn"].map({"Yes": 1, "No": 0})
         X = df.drop(columns=["Churn"])
         return X, y, X.columns
@@ -202,13 +192,7 @@ class FeatureStore:
         return df[columns]
 
     @classmethod
-    def prepare(cls, df: pd.DataFrame, training: bool = True, columns: Optional[List[str]] = None):
-        import os
-        if os.getenv("TESTING", "false").lower() == "true" and not training:
-            if columns is None:
-                columns = ["tenure", "MonthlyCharges", "TotalCharges"]
-            return df[columns] if all(col in df.columns for col in columns) else df
-        
+    def prepare(cls, df: pd.DataFrame, training: bool = True, columns: Optional[List[str]] = None) -> Any:
         df = df.copy()
         df = cls._drop_customer_id(df)
         df = cls._coerce_total_charges(df)
@@ -220,3 +204,7 @@ class FeatureStore:
             if columns is None:
                 raise ValueError("For inference, columns must be provided")
             return cls._align_columns(df, columns)
+
+    @classmethod
+    def prepare_with_cache(cls, df: pd.DataFrame, model_version: str, columns: List[str], ttl: int = None) -> pd.DataFrame:
+        return get_or_prepare_features(df, model_version, columns, ttl)

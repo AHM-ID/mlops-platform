@@ -45,10 +45,10 @@ async def trigger_retrain(role: str = Depends(require_retrain)):
             "message": "Retraining task has been submitted. Check logs for progress."
         }
     except Exception as e:
-        logger.error(f"Failed to submit retraining task: {e}")
+        logger.error(f"Failed to submit retraining task: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to submit retraining task: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 @router.get(
@@ -110,8 +110,8 @@ async def get_retrain_status(task_id: str, role: str = Depends(require_read)):
                 "result": None
             }
     except Exception as e:
-        logger.error(f"Failed to get task status: {e}")
+        logger.error(f"Failed to get task status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get task status: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
