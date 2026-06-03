@@ -2,19 +2,18 @@ import pickle
 import uuid
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
-from shared.config import RETRAIN_BATCH_SIZE, get_redis_client
+from shared.config import RETRAIN_BATCH_SIZE, get_redis_client, RETRAIN_QUEUE_KEY, RETRAIN_QUEUE_MAX_LENGTH
 from shared.logging import setup_logging
 
 logger = setup_logging("retrain_queue")
-
-RETRAIN_QUEUE_KEY = "retrain:training_data"
-RETRAIN_QUEUE_MAX_LENGTH = 100000
 
 class RetrainQueueManager:
     def __init__(self):
         self._redis_client = None
         self._connection_attempts = 0
         self._max_connection_attempts = 3
+        self.queue_key = RETRAIN_QUEUE_KEY
+        self.max_length = RETRAIN_QUEUE_MAX_LENGTH
 
     @property
     def redis_client(self):
@@ -51,11 +50,11 @@ class RetrainQueueManager:
                 "source": "auto_prediction"
             }
             serialized = pickle.dumps(record)
-            current_length = self.redis_client.llen(RETRAIN_QUEUE_KEY)
+            current_length = self.redis_client.llen(self.queue_key)
             if current_length >= RETRAIN_QUEUE_MAX_LENGTH:
-                self.redis_client.lpop(RETRAIN_QUEUE_KEY)
+                self.redis_client.lpop(self.queue_key)
                 logger.warning(f"Queue at max capacity, removed oldest record")
-            self.redis_client.rpush(RETRAIN_QUEUE_KEY, serialized)
+            self.redis_client.rpush(self.queue_key, serialized)
             logger.debug(f"Prediction logged: {record_id}, pred={prediction}")
             return record_id
         except Exception as e:
@@ -80,10 +79,10 @@ class RetrainQueueManager:
                 "source": "manual_collection"
             }
             serialized = pickle.dumps(record)
-            current_length = self.redis_client.llen(RETRAIN_QUEUE_KEY)
+            current_length = self.redis_client.llen(self.queue_key)
             if current_length >= RETRAIN_QUEUE_MAX_LENGTH:
-                self.redis_client.lpop(RETRAIN_QUEUE_KEY)
-            self.redis_client.rpush(RETRAIN_QUEUE_KEY, serialized)
+                self.redis_client.lpop(self.queue_key)
+            self.redis_client.rpush(self.queue_key, serialized)
             logger.info(f"Training record added: {record_id}, label={label}")
             return True
         except Exception as e:
@@ -157,7 +156,7 @@ class RetrainQueueManager:
         if not self._check_redis():
             return 0
         try:
-            return self.redis_client.llen(RETRAIN_QUEUE_KEY)
+            return self.redis_client.llen(self.queue_key)
         except Exception as e:
             logger.error(f"Failed to get queue length: {e}")
             return 0
@@ -166,7 +165,7 @@ class RetrainQueueManager:
         if not self._check_redis():
             return False
         try:
-            self.redis_client.delete(RETRAIN_QUEUE_KEY)
+            self.redis_client.delete(self.queue_key)
             logger.info("Retrain queue cleared")
             return True
         except Exception as e:
@@ -222,7 +221,7 @@ class RetrainQueueManager:
         if not self._check_redis():
             return []
         try:
-            raw_records = self.redis_client.lrange(RETRAIN_QUEUE_KEY, 0, -1)
+            raw_records = self.redis_client.lrange(self.queue_key, 0, -1)
             records = []
             for item in raw_records:
                 try:
@@ -240,7 +239,7 @@ class RetrainQueueManager:
             return False
         try:
             serialized = pickle.dumps(record)
-            self.redis_client.lset(RETRAIN_QUEUE_KEY, index, serialized)
+            self.redis_client.lset(self.queue_key, index, serialized)
             return True
         except Exception as e:
             logger.error(f"Failed to update record: {e}")
@@ -252,9 +251,9 @@ class RetrainQueueManager:
         try:
             all_records = self._get_all_records()
             remaining = [r for r in all_records if r.get("id") not in record_ids]
-            self.redis_client.delete(RETRAIN_QUEUE_KEY)
+            self.redis_client.delete(self.queue_key)
             for record in remaining:
-                self.redis_client.rpush(RETRAIN_QUEUE_KEY, pickle.dumps(record))
+                self.redis_client.rpush(self.queue_key, pickle.dumps(record))
             return len(record_ids)
         except Exception as e:
             logger.error(f"Failed to remove records: {e}")

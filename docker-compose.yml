@@ -96,7 +96,6 @@ services:
     volumes:
       - ./api:/app/api:ro,${SELINUX_RO}
       - ./shared:/app/shared:ro,${SELINUX_RO}
-      - prometheus_metrics:/prometheus-metrics
     networks:
       - mlops-network
     depends_on:
@@ -121,7 +120,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data:ro${SELINUX_RO}
-      - prometheus_metrics:/prometheus-metrics
     networks:
       - mlops-network
     depends_on:
@@ -220,6 +218,5 @@ volumes:
   garage_data:
     name: mlops-platform_garage_data
   grafana_data:
-  prometheus_metrics:
   loki_data:
   fluent-bit-storage:

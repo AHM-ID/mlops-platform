@@ -4,6 +4,7 @@ from pythonjsonlogger import jsonlogger
 import os
 import sys
 import json
+import time
 
 class SyncHTTPHandler(logging.Handler):
     """Simple synchronous HTTP handler for Fluent Bit"""
@@ -44,7 +45,7 @@ class SyncHTTPHandler(logging.Handler):
 
 
 def setup_logging(service_name: str, level=logging.INFO, extra=None):
-    logger = logging.getLogger()
+    logger = logging.getLogger(service_name)
     logger.setLevel(level)
     
     logger.handlers.clear()
@@ -53,7 +54,7 @@ def setup_logging(service_name: str, level=logging.INFO, extra=None):
     console_handler.setLevel(level)
     
     json_formatter = jsonlogger.JsonFormatter(
-        fmt='%(asctime)s %(levelname)s %(name)s %(message)s %(service)s %(request_id)s %(duration_ms)s %(customer_id)s %(prediction)s %(probability)s',
+        fmt='%(asctime)s %(levelname)s %(name)s %(message)s %(service)s %(request_id)s %(trace_id)s %(duration_ms)s %(customer_id)s %(prediction)s %(probability)s',
         rename_fields={
             'asctime': 'timestamp',
             'levelname': 'level',
@@ -88,3 +89,17 @@ def setup_logging(service_name: str, level=logging.INFO, extra=None):
     adapter.info(f"Logging initialized for {service_name}")
     
     return adapter
+
+
+class LogContextAdapter(logging.LoggerAdapter):
+    """Enriches logs with execution context for distributed tracing.
+    Preserves backward compatibility with existing logging calls.
+    """
+    def __init__(self, logger, extra=None):
+        super().__init__(logger, extra or {})
+    
+    def process(self, msg, kwargs):
+        extra = kwargs.get('extra', {})
+        merged_extra = {**self.extra, **extra}
+        kwargs['extra'] = merged_extra
+        return msg, kwargs

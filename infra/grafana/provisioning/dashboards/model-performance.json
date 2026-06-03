@@ -32,16 +32,8 @@
                     "color": {
                         "mode": "thresholds"
                     },
-                    "mappings": [
-                        {
-                            "options": {
-                                "1": {
-                                    "text": "v1"
-                                }
-                            },
-                            "type": "value"
-                        }
-                    ],
+                    "mappings": [],
+                    "prefix": "v",
                     "thresholds": {
                         "mode": "absolute",
                         "steps": [

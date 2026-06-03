@@ -1,18 +1,24 @@
 """
-Routers Package
-Export all routers for API
+Routers Package - MLOps Platform API
+
+Available routers:
+- inference: Single and batch predictions
+- models: Model registry and retraining
+- feedback: Feedback collection for model improvement
+- drift: Data drift detection
+- monitoring: Health checks and metrics
 """
 
-from api.routers import health
-from api.routers import predictions
+from api.routers import inference
 from api.routers import models
-from api.routers import batch_jobs
+from api.routers import feedback
+from api.routers import drift
 from api.routers import monitoring
 
 __all__ = [
-    "health",
-    "predictions",
+    "inference",
     "models",
-    "batch_jobs",
+    "feedback",
+    "drift",
     "monitoring",
 ]

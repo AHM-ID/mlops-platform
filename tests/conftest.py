@@ -1,8 +1,9 @@
+# tests/conftest.py
 """
 Pytest configuration for isolated unit tests.
 
 No live Postgres, Redis, MLflow, or other platform services are required.
-External I/O is mocked at the client boundary (get_redis_client, redis.from_url, MlflowClient, etc.).
+External I/O is mocked at the client boundary.
 """
 
 from __future__ import annotations
@@ -95,10 +96,8 @@ def mock_mlflow(_mock_external_services) -> Mock:
 
 @pytest.fixture(scope="session")
 def app(_mock_external_services):
-    """Load FastAPI app only when a test needs it (avoids heavy import for all 66 tests)."""
     if "app" not in _mock_state:
         from api.main import app as fastapi_app
-
         _mock_state["app"] = fastapi_app
     return _mock_state["app"]
 
@@ -106,21 +105,66 @@ def app(_mock_external_services):
 @pytest.fixture(scope="session")
 def test_client(app):
     from fastapi.testclient import TestClient
-
     with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture(scope="session")
+def api_client(test_client):
+    class ApiClient:
+        def __init__(self, client):
+            self.client = client
+
+        def _add_auth(self, headers, role="user"):
+            if headers is None:
+                headers = {}
+            if "X-API-Key" not in headers:
+                if role == "admin":
+                    headers["X-API-Key"] = os.environ["API_KEY_ADMIN"]
+                elif role == "user":
+                    headers["X-API-Key"] = os.environ["API_KEY_USER"]
+                elif role == "readonly":
+                    headers["X-API-Key"] = os.environ["API_KEY_READONLY"]
+            return headers
+
+        def get(self, path, headers=None, role="user"):
+            headers = self._add_auth(headers, role)
+            return self.client.get(f"{path}", headers=headers)
+
+        def post(self, path, json=None, headers=None, role="user"):
+            headers = self._add_auth(headers, role)
+            return self.client.post(f"{path}", json=json, headers=headers)
+
+        def delete(self, path, headers=None, role="user"):
+            headers = self._add_auth(headers, role)
+            return self.client.delete(f"{path}", headers=headers)
+
+    return ApiClient(test_client)
 
 
 @pytest.fixture(scope="session")
 def sample_prediction_request():
     return {
         "customer_id": "TEST001",
+        "gender": "Female",
+        "SeniorCitizen": 0,
+        "Partner": "Yes",
+        "Dependents": "No",
         "tenure": 24,
+        "PhoneService": "Yes",
+        "MultipleLines": "No",
+        "InternetService": "Fiber optic",
+        "OnlineSecurity": "No",
+        "OnlineBackup": "Yes",
+        "DeviceProtection": "No",
+        "TechSupport": "No",
+        "StreamingTV": "Yes",
+        "StreamingMovies": "No",
+        "Contract": "Two year",
+        "PaperlessBilling": "Yes",
+        "PaymentMethod": "Electronic check",
         "MonthlyCharges": 75.5,
         "TotalCharges": 1814.0,
-        "Contract": "Two year",
-        "InternetService": "Fiber optic",
-        "PaymentMethod": "Electronic check",
     }
 
 
@@ -131,17 +175,28 @@ def sample_batch_requests():
         "data": [
             {
                 "customer_id": f"CUST{i:03d}",
+                "gender": "Male" if i % 2 == 0 else "Female",
+                "SeniorCitizen": i % 2,
+                "Partner": "Yes" if i % 2 == 0 else "No",
+                "Dependents": "No",
                 "tenure": i % 72,
+                "PhoneService": "Yes",
+                "MultipleLines": "No",
+                "InternetService": ["DSL", "Fiber optic", "No"][i % 3],
+                "OnlineSecurity": "No",
+                "OnlineBackup": "Yes",
+                "DeviceProtection": "No",
+                "TechSupport": "No",
+                "StreamingTV": "Yes",
+                "StreamingMovies": "No",
+                "Contract": ["Month-to-month", "One year", "Two year"][i % 3],
+                "PaperlessBilling": "Yes",
+                "PaymentMethod": [
+                    "Electronic check", "Mailed check",
+                    "Bank transfer (automatic)", "Credit card (automatic)"
+                ][i % 4],
                 "MonthlyCharges": 50.0 + i,
                 "TotalCharges": (50.0 + i) * (i % 72) if (i % 72) > 0 else 50.0,
-                "Contract": ["Month-to-month", "One year", "Two year"][i % 3],
-                "InternetService": ["DSL", "Fiber optic", "No"][i % 3],
-                "PaymentMethod": [
-                    "Electronic check",
-                    "Mailed check",
-                    "Bank transfer (automatic)",
-                    "Credit card (automatic)",
-                ][i % 4],
             }
             for i in range(10)
         ],
@@ -163,20 +218,16 @@ _mock_state: dict = {}
 
 @pytest.fixture(scope="session", autouse=True)
 def _mock_external_services():
-    """
-    Session-wide mocks so imports and tests never open real network connections.
-    """
     mock_client_instance, mock_model = _build_mlflow_mocks()
     mock_redis_instance = _build_redis_mock()
 
     stack = ExitStack()
     stack.enter_context(patch("redis.from_url", return_value=mock_redis_instance))
     stack.enter_context(patch("shared.config.get_redis_client", return_value=mock_redis_instance))
-    stack.enter_context(
-        patch("mlflow.tracking.MlflowClient", return_value=mock_client_instance)
-    )
+    stack.enter_context(patch("mlflow.tracking.MlflowClient", return_value=mock_client_instance))
     stack.enter_context(patch("mlflow.pyfunc.load_model", return_value=mock_model))
     stack.enter_context(patch("mlflow.set_tracking_uri"))
+    stack.enter_context(patch("shared.logging.SyncHTTPHandler.emit"))
 
     _mock_state["redis"] = mock_redis_instance
     _mock_state["mlflow_model"] = mock_model
