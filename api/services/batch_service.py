@@ -1,33 +1,38 @@
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import uuid
-import json
-import redis
+import pickle
 from datetime import datetime
 
-from api.schemas import PredictionRequest
-from shared.config import REDIS_URL, BATCH_EXPIRY_SECONDS
+from api.schemas import PredictionRequest, BatchPredictionResponse
+from shared.config import BATCH_EXPIRY_SECONDS, get_redis_client
 from shared.logging import setup_logging
 from worker.celery_app import app as celery_app
 
 logger = setup_logging("batch_service")
 
-
 class BatchService:
     def __init__(self):
-        if os.getenv("TESTING", "false").lower() == "true":
-            self.redis_client = None
-        else:
-            self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        self._redis_client = None
+        self._init_redis()
+
+    def _init_redis(self):
+        try:
+            self._redis_client = get_redis_client(decode_responses=False)
+            self._redis_client.ping()
+        except Exception as e:
+            logger.warning(f"Redis connection failed for batch service: {e}")
+            self._redis_client = None
+
+    @property
+    def redis_client(self):
+        if self._redis_client is None:
+            self._init_redis()
+        return self._redis_client
 
     def create_batch(self, data: List[PredictionRequest], batch_name: Optional[str] = None) -> str:
-        import os
-        if os.getenv("TESTING", "false").lower() == "true":
-            return f"batch_test_{uuid.uuid4().hex[:8]}"
-        
         try:
             batch_id = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-            
             batch_data = [
                 {
                     "customer_id": req.customer_id,
@@ -40,24 +45,23 @@ class BatchService:
                 }
                 for req in data
             ]
-            
             from worker.batch_predictor import batch_predict
             celery_task = batch_predict.delay(batch_data, batch_id=batch_id)
-            
             batch_meta = {
                 "batch_id": batch_id,
                 "batch_name": batch_name or f"Batch {batch_id}",
                 "status": "submitted",
                 "total_records": len(data),
                 "processed_records": 0,
+                "progress": 0,
                 "created_at": datetime.now().isoformat(),
                 "started_at": None,
                 "completed_at": None,
                 "celery_task_id": str(celery_task.id),
                 "error": None
             }
-            
-            self.redis_client.setex(f"batch_meta:{batch_id}", BATCH_EXPIRY_SECONDS, json.dumps(batch_meta))
+            if self.redis_client:
+                self.redis_client.setex(f"batch_meta:{batch_id}", BATCH_EXPIRY_SECONDS, pickle.dumps(batch_meta))
             logger.info(f"Batch created: {batch_id} | records: {len(data)}")
             return batch_id
         except Exception as e:
@@ -65,61 +69,62 @@ class BatchService:
             raise
 
     def get_batch_status(self, batch_id: str) -> Optional[Dict]:
-        if os.getenv("TESTING", "false").lower() == "true":
-            return {"status": "completed", "batch_id": batch_id}
-        
+        if not self.redis_client:
+            return None
         try:
             meta_data = self.redis_client.get(f"batch_meta:{batch_id}")
             if not meta_data:
                 return None
-            meta = json.loads(meta_data)
-            
+            meta = pickle.loads(meta_data)
             task_id = meta.get("celery_task_id")
             if task_id:
                 task = celery_app.AsyncResult(task_id)
                 if task.state == "SUCCESS":
                     meta["status"] = "completed"
                     meta["progress"] = 100
-                    meta["completed_at"] = datetime.now().isoformat()
+                    if not meta.get("completed_at"):
+                        meta["completed_at"] = datetime.now().isoformat()
                 elif task.state == "FAILURE":
                     meta["status"] = "failed"
                     meta["error"] = str(task.info)
                 elif task.state in ["STARTED", "PROGRESS"]:
                     meta["status"] = "processing"
-                    meta["progress"] = 50 if "progress" not in meta else meta.get("progress")
-            
+                elif task.state == "PENDING":
+                    meta["status"] = "submitted"
             return meta
         except Exception as e:
             logger.error(f"Failed to get batch status: {e}", exc_info=True)
             return None
 
     def get_batch_results(self, batch_id: str) -> Optional[Dict]:
-        if os.getenv("TESTING", "false").lower() == "true":
-            return {"batch_id": batch_id, "results": []}
-        
+        if not self.redis_client:
+            return None
         try:
             results_data = self.redis_client.get(f"batch_results:{batch_id}")
             if results_data:
-                return json.loads(results_data)
+                return pickle.loads(results_data)
             return None
         except Exception as e:
             logger.error(f"Failed to get batch results: {e}", exc_info=True)
             return None
 
     def list_recent_jobs(self, limit: int = 10, status_filter: Optional[str] = None) -> List[Dict]:
-        if os.getenv("TESTING", "false").lower() == "true":
+        if not self.redis_client:
             return []
-        
         try:
-            keys = self.redis_client.keys("batch_meta:*")
+            cursor = 0
             jobs = []
-            for key in keys:
-                data = self.redis_client.get(key)
-                if data:
-                    job = json.loads(data)
-                    if status_filter and job.get("status") != status_filter:
-                        continue
-                    jobs.append(job)
+            while True:
+                cursor, keys = self.redis_client.scan(cursor, match="batch_meta:*", count=100)
+                for key in keys:
+                    data = self.redis_client.get(key)
+                    if data:
+                        job = pickle.loads(data)
+                        if status_filter and job.get("status") != status_filter:
+                            continue
+                        jobs.append(job)
+                if cursor == 0:
+                    break
             jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
             return jobs[:limit]
         except Exception as e:
@@ -143,37 +148,21 @@ class BatchService:
         }
 
     def get_batch_summary(self, batch_id: str) -> Optional[Dict]:
-        if os.getenv("TESTING", "false").lower() == "true":
-            return {
-                "batch_id": batch_id,
-                "total_records": 10,
-                "churn_predictions": 3,
-                "no_churn_predictions": 7,
-                "churn_rate": 0.3,
-                "average_churn_probability": 0.35,
-            }
-        
         try:
             results = self.get_batch_results(batch_id)
-            if not results or "summary" not in results:
+            if results and "summary" in results:
+                return results["summary"]
+            status = self.get_batch_status(batch_id)
+            if status and status.get("status") == "processing":
                 return None
-            summary = results["summary"]
-            return {
-                "batch_id": batch_id,
-                "total_records": summary.get("total_records", 0),
-                "churn_predictions": summary.get("churn_predictions", 0),
-                "no_churn_predictions": summary.get("no_churn_predictions", 0),
-                "churn_rate": summary.get("churn_rate", 0.0),
-                "average_churn_probability": summary.get("average_churn_probability", 0.0),
-            }
+            return None
         except Exception as e:
             logger.error(f"Failed to get batch summary: {e}", exc_info=True)
             return None
 
     def delete_batch(self, batch_id: str) -> bool:
-        if os.getenv("TESTING", "false").lower() == "true":
-            return True
-        
+        if not self.redis_client:
+            return False
         try:
             self.redis_client.delete(f"batch_meta:{batch_id}")
             self.redis_client.delete(f"batch_results:{batch_id}")
@@ -184,21 +173,19 @@ class BatchService:
             return False
 
     def get_celery_task_id(self, batch_id: str) -> str:
-        if os.getenv("TESTING", "false").lower() == "true":
-            return "test_task_id"
-        
+        if not self.redis_client:
+            return ""
         try:
             meta_data = self.redis_client.get(f"batch_meta:{batch_id}")
             if meta_data:
-                meta = json.loads(meta_data)
+                meta = pickle.loads(meta_data)
                 return meta.get("celery_task_id", "")
             return ""
         except Exception as e:
             logger.error(f"Failed to get celery task ID: {e}")
             return ""
 
-    def submit_batch(self, request) -> object:
-        from api.schemas import BatchPredictionResponse
+    def submit_batch(self, request) -> BatchPredictionResponse:
         batch_id = self.create_batch(request.data, request.batch_name)
         return BatchPredictionResponse(
             batch_id=batch_id,

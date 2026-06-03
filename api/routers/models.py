@@ -86,7 +86,7 @@ async def get_current_models() -> ModelListResponse:
         logger.error(f"Failed to get models: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to retrieve models: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -139,7 +139,7 @@ async def get_model_details(model_name: str) -> ModelMetadata:
         logger.error(f"Failed to get model details: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to retrieve model details: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -201,7 +201,7 @@ async def list_model_versions(model_name: str) -> List[ModelMetadata]:
         logger.error(f"Failed to list model versions: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to list model versions: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -302,7 +302,7 @@ async def deploy_model(request: ModelDeployRequest) -> ModelDeployResponse:
         logger.error(f"Model deployment failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Model deployment failed: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 

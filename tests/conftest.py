@@ -2,7 +2,7 @@
 Pytest configuration for isolated unit tests.
 
 No live Postgres, Redis, MLflow, or other platform services are required.
-External I/O is mocked at the client boundary (redis.from_url, MlflowClient, etc.).
+External I/O is mocked at the client boundary (get_redis_client, redis.from_url, MlflowClient, etc.).
 """
 
 from __future__ import annotations
@@ -79,6 +79,7 @@ def _build_redis_mock() -> Mock:
     mock_redis_instance.delete.return_value = 1
     mock_redis_instance.pipeline.return_value = mock_redis_instance
     mock_redis_instance.execute.return_value = []
+    mock_redis_instance.scan.return_value = (0, [])
     return mock_redis_instance
 
 
@@ -170,6 +171,7 @@ def _mock_external_services():
 
     stack = ExitStack()
     stack.enter_context(patch("redis.from_url", return_value=mock_redis_instance))
+    stack.enter_context(patch("shared.config.get_redis_client", return_value=mock_redis_instance))
     stack.enter_context(
         patch("mlflow.tracking.MlflowClient", return_value=mock_client_instance)
     )

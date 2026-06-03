@@ -1,32 +1,40 @@
-import redis
-import json
 import pickle
 import uuid
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
-from shared.config import REDIS_URL, RETRAIN_BATCH_SIZE
+from shared.config import RETRAIN_BATCH_SIZE, get_redis_client
 from shared.logging import setup_logging
 
 logger = setup_logging("retrain_queue")
 
 RETRAIN_QUEUE_KEY = "retrain:training_data"
+RETRAIN_QUEUE_MAX_LENGTH = 100000
 
 class RetrainQueueManager:
     def __init__(self):
-        try:
-            self.redis_client = redis.from_url(
-                REDIS_URL,
-                decode_responses=False,
-                socket_connect_timeout=5
-            )
-            self.redis_client.ping()
-            logger.info("Retrain queue manager connected to Redis")
-        except Exception as e:
-            logger.warning(f"Redis connection failed for retrain queue: {e}")
-            self.redis_client = None
+        self._redis_client = None
+        self._connection_attempts = 0
+        self._max_connection_attempts = 3
 
-    def add_prediction(self, features: Dict, prediction: int, probability: float, customer_id: str = None, prediction_id: str = None) -> str:
-        if self.redis_client is None:
+    @property
+    def redis_client(self):
+        if self._redis_client is None and self._connection_attempts < self._max_connection_attempts:
+            try:
+                self._connection_attempts += 1
+                self._redis_client = get_redis_client(decode_responses=False)
+                self._redis_client.ping()
+                logger.info("Retrain queue manager connected to Redis")
+            except Exception as e:
+                logger.warning(f"Redis connection failed for retrain queue (attempt {self._connection_attempts}): {e}")
+                self._redis_client = None
+        return self._redis_client
+
+    def _check_redis(self) -> bool:
+        return self.redis_client is not None
+
+    def add_prediction(self, features: Dict, prediction: int, probability: float,
+                       customer_id: str = None, prediction_id: str = None) -> str:
+        if not self._check_redis():
             return ""
         try:
             record_id = prediction_id or str(uuid.uuid4())
@@ -43,6 +51,10 @@ class RetrainQueueManager:
                 "source": "auto_prediction"
             }
             serialized = pickle.dumps(record)
+            current_length = self.redis_client.llen(RETRAIN_QUEUE_KEY)
+            if current_length >= RETRAIN_QUEUE_MAX_LENGTH:
+                self.redis_client.lpop(RETRAIN_QUEUE_KEY)
+                logger.warning(f"Queue at max capacity, removed oldest record")
             self.redis_client.rpush(RETRAIN_QUEUE_KEY, serialized)
             logger.debug(f"Prediction logged: {record_id}, pred={prediction}")
             return record_id
@@ -51,7 +63,7 @@ class RetrainQueueManager:
             return ""
 
     def add_training_record(self, features: Dict, label: int) -> bool:
-        if self.redis_client is None:
+        if not self._check_redis():
             return False
         try:
             record_id = str(uuid.uuid4())
@@ -68,6 +80,9 @@ class RetrainQueueManager:
                 "source": "manual_collection"
             }
             serialized = pickle.dumps(record)
+            current_length = self.redis_client.llen(RETRAIN_QUEUE_KEY)
+            if current_length >= RETRAIN_QUEUE_MAX_LENGTH:
+                self.redis_client.lpop(RETRAIN_QUEUE_KEY)
             self.redis_client.rpush(RETRAIN_QUEUE_KEY, serialized)
             logger.info(f"Training record added: {record_id}, label={label}")
             return True
@@ -76,7 +91,7 @@ class RetrainQueueManager:
             return False
 
     def update_label(self, record_id: str, actual_label: int) -> bool:
-        if self.redis_client is None:
+        if not self._check_redis():
             return False
         try:
             all_records = self._get_all_records()
@@ -94,7 +109,7 @@ class RetrainQueueManager:
             return False
 
     def get_training_batch(self, batch_size: int = None) -> List[Dict]:
-        if self.redis_client is None:
+        if not self._check_redis():
             return []
         if batch_size is None:
             batch_size = RETRAIN_BATCH_SIZE
@@ -115,8 +130,7 @@ class RetrainQueueManager:
             return []
 
     def get_recent_predictions(self, hours: int = 24, limit: int = 10000) -> List[Dict]:
-        """Get recent predictions for drift detection"""
-        if self.redis_client is None:
+        if not self._check_redis():
             return []
         try:
             all_records = self._get_all_records()
@@ -129,7 +143,7 @@ class RetrainQueueManager:
                         dt = datetime.fromisoformat(pred_time)
                         if dt > cutoff:
                             recent.append(rec)
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 if len(recent) >= limit:
                     break
@@ -140,7 +154,7 @@ class RetrainQueueManager:
             return []
 
     def get_queue_length(self) -> int:
-        if self.redis_client is None:
+        if not self._check_redis():
             return 0
         try:
             return self.redis_client.llen(RETRAIN_QUEUE_KEY)
@@ -149,7 +163,7 @@ class RetrainQueueManager:
             return 0
 
     def clear_queue(self) -> bool:
-        if self.redis_client is None:
+        if not self._check_redis():
             return False
         try:
             self.redis_client.delete(RETRAIN_QUEUE_KEY)
@@ -160,7 +174,7 @@ class RetrainQueueManager:
             return False
 
     def expire_old_pending(self, days: int = 30) -> int:
-        if self.redis_client is None:
+        if not self._check_redis():
             return 0
         try:
             all_records = self._get_all_records()
@@ -174,17 +188,38 @@ class RetrainQueueManager:
                             pred_dt = datetime.fromisoformat(pred_time)
                             if pred_dt < cutoff:
                                 expired_ids.append(record.get("id"))
-                        except:
+                        except (ValueError, TypeError):
                             pass
             self._remove_records(expired_ids)
-            logger.info(f"Expired {len(expired_ids)} pending records older than {days} days")
+            if expired_ids:
+                logger.info(f"Expired {len(expired_ids)} pending records older than {days} days")
             return len(expired_ids)
         except Exception as e:
             logger.error(f"Failed to expire old records: {e}")
             return 0
 
+    def get_queue_stats(self) -> Dict[str, Any]:
+        if not self._check_redis():
+            return {"status": "disconnected", "queue_length": 0}
+        try:
+            all_records = self._get_all_records()
+            pending = sum(1 for r in all_records if r.get("validation_status") == "pending")
+            verified = sum(1 for r in all_records if r.get("validation_status") == "verified")
+            with_labels = sum(1 for r in all_records if r.get("label") is not None)
+            return {
+                "status": "connected",
+                "queue_length": len(all_records),
+                "pending_count": pending,
+                "verified_count": verified,
+                "with_labels_count": with_labels,
+                "max_capacity": RETRAIN_QUEUE_MAX_LENGTH
+            }
+        except Exception as e:
+            logger.error(f"Failed to get queue stats: {e}")
+            return {"status": "error", "error": str(e)}
+
     def _get_all_records(self) -> List[Dict]:
-        if self.redis_client is None:
+        if not self._check_redis():
             return []
         try:
             raw_records = self.redis_client.lrange(RETRAIN_QUEUE_KEY, 0, -1)
@@ -192,7 +227,8 @@ class RetrainQueueManager:
             for item in raw_records:
                 try:
                     records.append(pickle.loads(item))
-                except:
+                except (pickle.PickleError, TypeError, EOFError) as e:
+                    logger.warning(f"Failed to deserialize record: {e}")
                     continue
             return records
         except Exception as e:
@@ -200,7 +236,7 @@ class RetrainQueueManager:
             return []
 
     def _update_record_at_index(self, index: int, record: Dict) -> bool:
-        if self.redis_client is None:
+        if not self._check_redis():
             return False
         try:
             serialized = pickle.dumps(record)
@@ -211,7 +247,7 @@ class RetrainQueueManager:
             return False
 
     def _remove_records(self, record_ids: List[str]) -> int:
-        if self.redis_client is None or not record_ids:
+        if not self._check_redis() or not record_ids:
             return 0
         try:
             all_records = self._get_all_records()
