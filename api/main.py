@@ -9,39 +9,44 @@ from contextlib import asynccontextmanager
 import asyncio
 from shared.retrain_queue import RetrainQueueManager
 from fastapi.openapi.utils import get_openapi
+from datetime import datetime, date
+from decimal import Decimal
+import json
 
 from api.auth import get_role_from_api_key
 from api.rate_limiter import get_rate_limiter, get_real_client_ip
-from api.routers import (
-    health,
-    predictions,
-    models,
-    batch_jobs,
-    labeling,
-    drift,
-    monitoring
-)
-from api.routers.retrains import router as retrain_router
-from api.routers.retrain_queue import router as retrain_queue_router
-from api.routers.monitoring import metrics_collector
+from api.routers import inference, models, feedback, drift, monitoring
 from api.schemas import ErrorResponse
 from shared.logging import setup_logging
 from shared.metrics import REQUESTS, REQUEST_DURATION, start_system_metrics_collector, RETRAIN_QUEUE_LENGTH
-from datetime import datetime
 
 logger = setup_logging("api")
 executor = ThreadPoolExecutor(max_workers=2)
+
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
+
 
 def _serialize_error_response(error_response: ErrorResponse) -> dict:
     if hasattr(error_response, 'model_dump'):
         return error_response.model_dump()
     return error_response.dict()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting MLOps Platform API")
+    logger.info("Starting MLOps Platform API v3.0")
     start_system_metrics_collector()
     queue_manager = RetrainQueueManager()
+    
     async def update_queue_length():
         while True:
             try:
@@ -56,6 +61,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Failed to update queue length: {e}")
                 await asyncio.sleep(60)
+    
     queue_task = asyncio.create_task(update_queue_length())
     yield
     logger.info("Shutting down MLOps Platform API")
@@ -66,26 +72,60 @@ async def lifespan(app: FastAPI):
         pass
     executor.shutdown(wait=False)
 
+
 app = FastAPI(
     title="MLOps Platform API",
-    description="Comprehensive API for ML Model Management and Predictions with Authentication and Rate Limiting",
-    version="3.0.0",
+    description="""
+    # MLOps Platform API for Customer Churn Prediction
+    
+    This API provides endpoints for:
+    - **Real-time and batch predictions** for customer churn
+    - **Model management** including deployment and retraining
+    - **Feedback collection** for model improvement
+    - **Drift detection** to monitor data quality
+    - **System monitoring** for operational health
+    
+    ## Authentication
+    
+    All endpoints except health checks require an API key in the `X-API-Key` header.
+    
+    ### Available API Keys:
+    - **Admin**: Full access (read, write, retrain, batch, admin)
+    - **User**: Standard access (read, write, batch)
+    - **Readonly**: Read-only access (read)
+    
+    ## Rate Limits
+    - Admin: 1000 requests per minute
+    - User: 100 requests per minute
+    - Readonly: 50 requests per minute
+    - Anonymous: 10 requests per minute
+    
+    ## Response Format
+    All responses are in JSON format. Errors follow a consistent structure:
+    ```json
+    {
+        "error": "Error message",
+        "error_code": "ERROR_CODE",
+        "details": {},
+        "timestamp": "2024-01-15T10:30:00Z"
+    }
+    ```
+    """,
+    version="4.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
-app.include_router(health.router, tags=["Health"])
-app.include_router(predictions.router, prefix="/predictions", tags=["Predictions"])
-app.include_router(models.router, prefix="/models", tags=["Model Management"])
-app.include_router(batch_jobs.router, prefix="/batch", tags=["Batch Processing"])
-app.include_router(monitoring.router, prefix="/monitoring", tags=["Monitoring & Metrics"])
-app.include_router(retrain_router, tags=["Model Retraining"])
-app.include_router(retrain_queue_router, tags=["Model Retraining"])
-app.include_router(labeling.router, tags=["Feedback & Labeling"])
-app.include_router(drift.router, prefix="/monitoring", tags=["Data Drift Monitoring"])
+# Register routers with clean, logical structure
+app.include_router(inference.router, prefix="/inference")
+app.include_router(models.router, prefix="/models")
+app.include_router(feedback.router, prefix="/feedback")
+app.include_router(drift.router, prefix="/drift")
+app.include_router(monitoring.router, prefix="/monitoring")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -94,21 +134,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================
+# Middlewares
+# ============================================
+
+@app.middleware("http")
+async def tracing_middleware(request: Request, call_next):
+    """Add trace_id to every request for distributed tracing"""
+    trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4()))
+    request.state.trace_id = trace_id
+    response = await call_next(request)
+    response.headers["X-Trace-ID"] = trace_id
+    return response
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    public_paths = ["/health", "/docs", "/redoc", "/openapi.json", "/", "/monitoring/metrics", "/monitoring/metrics/prometheus", "/health/ready"]
+    public_paths = [
+        "/health", "/docs", "/redoc", "/openapi.json", "/",
+        "/monitoring/health", "/monitoring/ready", "/monitoring/metrics"
+    ]
     if any(request.url.path.startswith(path) for path in public_paths):
         request.state.role = "anonymous"
         response = await call_next(request)
         return response
+    
     api_key = request.headers.get("X-API-Key")
     if api_key:
         role = get_role_from_api_key(api_key)
         request.state.role = role if role else "anonymous"
     else:
         request.state.role = "anonymous"
+    
     response = await call_next(request)
     return response
+
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
@@ -119,139 +180,144 @@ async def rate_limit_middleware(request: Request, call_next):
     role = getattr(request.state, "role", "anonymous")
     rate_info = limiter.check_rate_limit(identifier, role)
     request.state.rate_limit_info = rate_info
+    
     response = await call_next(request)
+    
     if hasattr(request.state, "rate_limit_info"):
         info = request.state.rate_limit_info
         response.headers["X-RateLimit-Limit"] = str(info.get("limit", 0))
         response.headers["X-RateLimit-Remaining"] = str(info.get("remaining", 0))
         response.headers["X-RateLimit-Reset"] = str(info.get("reset_time", 0))
+    
     return response
+
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
     start_time = time.time()
     path = request.url.path
-    normalized_path = re.sub(r'/api/batch/[^/]+', '/api/batch/{batch_id}', path)
+    # Normalize paths for metrics
+    normalized_path = re.sub(r'/batch/[^/]+', '/batch/{batch_id}', path)
+    normalized_path = re.sub(r'/feedback/[^/]+', '/feedback/{prediction_id}', normalized_path)
+    
     try:
         response = await call_next(request)
         duration = time.time() - start_time
-        REQUESTS.labels(method=request.method, endpoint=normalized_path, status=str(response.status_code)).inc()
+        REQUESTS.labels(
+            method=request.method, 
+            endpoint=normalized_path, 
+            status=str(response.status_code)
+        ).inc()
         REQUEST_DURATION.labels(method=request.method, endpoint=normalized_path).observe(duration)
-        if "/metrics" not in path:
-            metrics_collector.record_request(success=response.status_code < 400, response_time_ms=duration*1000)
         return response
     except Exception:
         duration = time.time() - start_time
         REQUESTS.labels(method=request.method, endpoint=normalized_path, status="500").inc()
         REQUEST_DURATION.labels(method=request.method, endpoint=normalized_path).observe(duration)
-        metrics_collector.record_request(success=False, response_time_ms=duration*1000)
         raise
 
-@app.middleware("http")
-async def tracing_middleware(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    request.state.request_id = request_id
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
-    return response
 
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
     start_time = time.time()
     client_ip = get_real_client_ip(request)
+    
     logger.info(
         "Request started",
         extra={
-            "request_id": request_id,
+            "trace_id": trace_id,
             "method": request.method,
             "path": request.url.path,
             "client_ip": client_ip
         }
     )
+    
     try:
         response = await call_next(request)
         duration_ms = (time.time() - start_time) * 1000
         logger.info(
             "Request completed",
             extra={
-                "request_id": request_id,
+                "trace_id": trace_id,
                 "status_code": response.status_code,
                 "duration_ms": duration_ms
             }
         )
-        response.headers["X-Request-ID"] = request_id
         return response
     except Exception as e:
         logger.error(
             "Request failed",
             exc_info=True,
-            extra={
-                "request_id": request_id,
-                "error": str(e)
-            }
+            extra={"trace_id": trace_id, "error": str(e)}
         )
         raise
 
+
+# ============================================
+# Exception Handlers
+# ============================================
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+    
     if exc.status_code >= 500:
-        logger.error(f"HTTP {exc.status_code}: {exc.detail}", extra={"request_id": request_id})
+        logger.error(f"HTTP {exc.status_code}: {exc.detail}", extra={"trace_id": trace_id})
         error_response = ErrorResponse(
             error="Internal server error",
             error_code="INTERNAL_ERROR",
-            details={"request_id": request_id},
+            details={"trace_id": trace_id},
             timestamp=datetime.now()
         )
         return JSONResponse(
             status_code=exc.status_code,
-            content=_serialize_error_response(error_response)
+            content=json.loads(json.dumps(_serialize_error_response(error_response), cls=CustomJSONEncoder))
         )
+    
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, "request_id": request_id}
+        content={"detail": exc.detail, "trace_id": trace_id}
     )
+
+
+# ============================================
+# Root Endpoints
+# ============================================
 
 @app.get("/", tags=["Root"])
 async def root():
     return {
         "message": "MLOps Platform API",
-        "version": "3.0.0",
-        "docs": "/docs",
+        "version": "4.3.0",
+        "documentation": "/docs",
         "redoc": "/redoc",
-        "openapi": "/openapi.json"
+        "openapi": "/openapi.json",
+        "endpoints": {
+            "inference": "/inference",
+            "models": "/models",
+            "feedback": "/feedback",
+            "drift": "/drift",
+            "monitoring": "/monitoring"
+        }
     }
 
-@app.get("/health", tags=["Health"])
-async def quick_health():
-    return {"status": "healthy", "version": "3.0.0"}
 
-@app.get("/health/ready", tags=["Health"])
-async def readiness_check():
-    import mlflow
-    from shared.config import REDIS_URL, MLFLOW_TRACKING_URI, get_redis_client
-    status = {"ready": True, "checks": {}}
-    try:
-        r = get_redis_client()
-        r.ping()
-        status["checks"]["redis"] = "ok"
-    except Exception as e:
-        status["checks"]["redis"] = str(e)
-        status["ready"] = False
-    try:
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        mlflow.search_experiments(max_results=1)
-        status["checks"]["mlflow"] = "ok"
-    except Exception as e:
-        status["checks"]["mlflow"] = str(e)
-        status["ready"] = False
-    return status
+@app.get("/health", tags=["Root"])
+async def quick_health():
+    """Quick health check for load balancers"""
+    return {"status": "healthy", "version": "4.3.0"}
+
+
+# ============================================
+# OpenAPI Customization
+# ============================================
 
 @app.get("/openapi.json", include_in_schema=False)
 async def get_custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+    
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
@@ -260,20 +326,26 @@ async def get_custom_openapi():
         routes=app.routes,
         servers=app.servers,
     )
+    
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
+    
     openapi_schema["components"]["securitySchemes"] = {
         "APIKeyHeader": {
             "type": "apiKey",
             "in": "header",
-            "name": "X-API-Key"
+            "name": "X-API-Key",
+            "description": "API key for authentication. Use: admin-secret-key, user-secret-key, or readonly-secret-key"
         }
     }
+    
     if "security" not in openapi_schema:
         openapi_schema["security"] = []
     openapi_schema["security"].append({"APIKeyHeader": []})
+    
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 if __name__ == "__main__":
     import uvicorn

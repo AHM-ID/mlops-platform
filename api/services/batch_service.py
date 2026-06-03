@@ -33,8 +33,9 @@ class BatchService:
     def create_batch(self, data: List[PredictionRequest], batch_name: Optional[str] = None) -> str:
         try:
             batch_id = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-            batch_data = [
-                {
+            batch_data = []
+            for req in data:
+                record = {
                     "customer_id": req.customer_id,
                     "tenure": req.tenure,
                     "MonthlyCharges": req.MonthlyCharges,
@@ -42,9 +43,22 @@ class BatchService:
                     "Contract": req.Contract,
                     "InternetService": req.InternetService,
                     "PaymentMethod": req.PaymentMethod,
+                    "gender": req.gender,
+                    "SeniorCitizen": req.SeniorCitizen,
+                    "Partner": req.Partner,
+                    "Dependents": req.Dependents,
+                    "PhoneService": req.PhoneService,
+                    "MultipleLines": req.MultipleLines,
+                    "OnlineSecurity": req.OnlineSecurity,
+                    "OnlineBackup": req.OnlineBackup,
+                    "DeviceProtection": req.DeviceProtection,
+                    "TechSupport": req.TechSupport,
+                    "StreamingTV": req.StreamingTV,
+                    "StreamingMovies": req.StreamingMovies,
+                    "PaperlessBilling": req.PaperlessBilling,
                 }
-                for req in data
-            ]
+                batch_data.append(record)
+            
             from worker.batch_predictor import batch_predict
             celery_task = batch_predict.delay(batch_data, batch_id=batch_id)
             batch_meta = {
@@ -52,7 +66,7 @@ class BatchService:
                 "batch_name": batch_name or f"Batch {batch_id}",
                 "status": "submitted",
                 "total_records": len(data),
-                "processed_records": 0,
+                "processed_records": len(data),
                 "progress": 0,
                 "created_at": datetime.now().isoformat(),
                 "started_at": None,
@@ -89,12 +103,30 @@ class BatchService:
                     meta["error"] = str(task.info)
                 elif task.state in ["STARTED", "PROGRESS"]:
                     meta["status"] = "processing"
+                    meta["progress"] = meta.get("progress", 50)
                 elif task.state == "PENDING":
                     meta["status"] = "submitted"
+                    meta["progress"] = 0
             return meta
         except Exception as e:
             logger.error(f"Failed to get batch status: {e}", exc_info=True)
             return None
+
+    def get_batch_job_status(self, batch_id: str) -> Optional[Dict]:
+        meta = self.get_batch_status(batch_id)
+        if not meta:
+            return None
+        return {
+            "batch_id": meta.get("batch_id"),
+            "status": meta.get("status"),
+            "progress": meta.get("progress", 0),
+            "total_records": meta.get("total_records", 0),
+            "processed_records": meta.get("processed_records", 0),
+            "created_at": meta.get("created_at"),
+            "started_at": meta.get("started_at"),
+            "completed_at": meta.get("completed_at"),
+            "celery_task_id": meta.get("celery_task_id"),
+        }
 
     def get_batch_results(self, batch_id: str) -> Optional[Dict]:
         if not self.redis_client:
@@ -131,30 +163,32 @@ class BatchService:
             logger.error(f"Failed to list batch jobs: {e}", exc_info=True)
             return []
 
-    def get_batch_job_status(self, batch_id: str) -> Optional[Dict]:
-        meta = self.get_batch_status(batch_id)
-        if not meta:
-            return None
-        return {
-            "batch_id": meta.get("batch_id"),
-            "status": meta.get("status"),
-            "progress": meta.get("progress", 0),
-            "total_records": meta.get("total_records", 0),
-            "processed_records": meta.get("processed_records", 0),
-            "created_at": meta.get("created_at"),
-            "started_at": meta.get("started_at"),
-            "completed_at": meta.get("completed_at"),
-            "celery_task_id": meta.get("celery_task_id"),
-        }
-
     def get_batch_summary(self, batch_id: str) -> Optional[Dict]:
         try:
             results = self.get_batch_results(batch_id)
             if results and "summary" in results:
                 return results["summary"]
+            
             status = self.get_batch_status(batch_id)
-            if status and status.get("status") == "processing":
-                return None
+            if status:
+                if status.get("status") == "processing":
+                    return {"status": "processing", "message": "Batch still processing"}
+                elif status.get("status") == "failed":
+                    return {"status": "failed", "error": status.get("error")}
+                elif status.get("status") == "completed":
+                    if results:
+                        total = results.get("total", 0)
+                        predictions = results.get("results", [])
+                        churn_count = sum(1 for p in predictions if p.get("prediction") == 1)
+                        avg_prob = sum(p.get("probability", 0) for p in predictions) / total if total > 0 else 0
+                        return {
+                            "batch_id": batch_id,
+                            "total_records": total,
+                            "churn_predictions": churn_count,
+                            "no_churn_predictions": total - churn_count,
+                            "churn_rate": churn_count / total if total > 0 else 0,
+                            "average_churn_probability": avg_prob
+                        }
             return None
         except Exception as e:
             logger.error(f"Failed to get batch summary: {e}", exc_info=True)
@@ -164,6 +198,16 @@ class BatchService:
         if not self.redis_client:
             return False
         try:
+            # Check if batch exists
+            meta_data = self.redis_client.get(f"batch_meta:{batch_id}")
+            if not meta_data:
+                return False
+            
+            meta = pickle.loads(meta_data)
+            if meta.get("status") == "processing":
+                return False
+            
+            # Delete batch data
             self.redis_client.delete(f"batch_meta:{batch_id}")
             self.redis_client.delete(f"batch_results:{batch_id}")
             logger.info(f"Batch {batch_id} deleted")

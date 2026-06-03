@@ -372,13 +372,13 @@
                         "type": "prometheus",
                         "uid": "Prometheus"
                     },
-                    "expr": "((sum(rate(api_requests_total{status=~\"4..|5..\"}[5m])) or vector(0)) / (sum(rate(api_requests_total[5m])) or vector(1))) * 100",
+                    "expr": "((sum(rate(api_requests_total{status=~\"4..|5..\"}[10m])) or vector(0)) / (sum(rate(api_requests_total[1h])) or vector(1))) * 100",
                     "instant": false,
                     "legendFormat": "Error Rate",
                     "refId": "A"
                 }
             ],
-            "title": "Overall Error Rate",
+            "title": "Overall Error Rate (10 Min)",
             "type": "stat"
         },
         {

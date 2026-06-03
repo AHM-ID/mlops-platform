@@ -1,3 +1,4 @@
+# api/services/prediction_service.py
 import os
 import uuid
 import time
@@ -6,13 +7,15 @@ import mlflow
 import mlflow.pyfunc
 import pandas as pd
 from typing import Tuple, Optional
+import re
+import tempfile
+import joblib
+
 from api.schemas import PredictionRequest
 from shared.config import MODEL_NAME, MLFLOW_TRACKING_URI, CACHE_TTL_SECONDS, COLUMNS_FILE, get_redis_client
-from shared.metrics import PREDICTION_LATENCY, MODEL_ACTIVE_VERSION, MODEL_AUC_SCORE, PREDICTION_OUTCOME_TOTAL
+from shared.metrics import PREDICTION_LATENCY, MODEL_ACTIVE_VERSION, MODEL_AUC_SCORE, PREDICTION_OUTCOME_TOTAL, set_model_metrics
 from shared.logging import setup_logging
 from shared.feature_store import get_or_prepare_features
-import joblib
-import tempfile
 
 logger = setup_logging("prediction_service")
 
@@ -27,6 +30,7 @@ class PredictionService:
         if os.getenv("TESTING", "false").lower() != "true":
             self._load_model()
             self._start_background_version_check()
+            self._update_model_metrics_from_mlflow()
         else:
             logger.info("Running in test mode, model loading skipped")
 
@@ -36,12 +40,54 @@ class PredictionService:
             self._redis_client = get_redis_client()
         return self._redis_client
 
+    def _get_current_production_version(self) -> Optional[str]:
+        try:
+            client = mlflow.tracking.MlflowClient()
+            all_versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+            for version in all_versions:
+                if version.current_stage == "Production":
+                    return version.version
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get current production version: {e}")
+            return None
+
+    def _get_production_model_run_id(self) -> Optional[str]:
+        try:
+            client = mlflow.tracking.MlflowClient()
+            all_versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+            for version in all_versions:
+                if version.current_stage == "Production":
+                    return version.run_id
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get production run_id: {e}")
+            return None
+
+    def _update_model_metrics_from_mlflow(self):
+        try:
+            client = mlflow.tracking.MlflowClient()
+            versions = client.get_latest_versions(MODEL_NAME, stages=["Production"])
+            if versions:
+                prod_v = versions[0]
+                run = client.get_run(prod_v.run_id)
+                auc = run.data.metrics.get('auc', run.data.metrics.get('roc_auc', 0.0))
+                set_model_metrics(prod_v.version, auc)
+                logger.info(f"Metrics synced: v{prod_v.version}, AUC={auc}")
+            else:
+                logger.warning("No production model found in MLflow")
+                set_model_metrics("0", 0.0)
+        except Exception as e:
+            logger.warning(f"Metric sync failed: {e}")
+            set_model_metrics("0", 0.0)
+
     def _start_background_version_check(self):
         def check_loop():
             while True:
                 time.sleep(self._version_check_interval)
                 try:
-                    self._check_and_reload_if_needed()
+                    if self._check_and_reload_if_needed():
+                        self._update_model_metrics_from_mlflow()
                 except Exception as e:
                     logger.warning(f"Background version check failed: {e}")
         thread = threading.Thread(target=check_loop, daemon=True)
@@ -49,18 +95,11 @@ class PredictionService:
         logger.info("Background model version checker started")
 
     def _get_latest_version_from_mlflow(self) -> Optional[str]:
-        try:
-            client = mlflow.tracking.MlflowClient()
-            latest = client.get_latest_versions(MODEL_NAME, stages=["Production"])
-            if latest:
-                return str(latest[0].version)
-        except Exception as e:
-            logger.warning(f"Failed to get latest model version: {e}")
-        return None
+        return self._get_current_production_version()
 
     def _check_and_reload_if_needed(self) -> bool:
         latest_version = self._get_latest_version_from_mlflow()
-        if latest_version and latest_version != self._model_version:
+        if latest_version and str(latest_version) != str(self._model_version):
             logger.info(f"Model version changed from {self._model_version} to {latest_version}. Reloading...")
             self._load_model()
             return True
@@ -70,17 +109,35 @@ class PredictionService:
         try:
             mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
             self._model = mlflow.pyfunc.load_model(f"models:/{MODEL_NAME}/Production")
+            
             client = mlflow.tracking.MlflowClient()
-            latest = client.get_latest_versions(MODEL_NAME, stages=["Production"])
-            if not latest:
-                raise RuntimeError(f"No production model found for {MODEL_NAME}")
-            self._model_version = str(latest[0].version)
-            MODEL_ACTIVE_VERSION.set(float(self._model_version))
-            run = client.get_run(latest[0].run_id)
-            auc = run.data.metrics.get('auc', run.data.metrics.get('roc_auc', run.data.metrics.get('AUC', 0)))
-            MODEL_AUC_SCORE.set(auc)
+            version = self._get_current_production_version()
+            
+            if not version:
+                logger.warning(f"No production model found for {MODEL_NAME}, using latest")
+                versions = client.get_latest_versions(MODEL_NAME, stages=["None"])
+                if versions:
+                    version = versions[0].version
+                    logger.info(f"Using latest model version: {version}")
+                else:
+                    raise RuntimeError(f"No model found for {MODEL_NAME}")
+            
+            self._model_version = version
+            
+            try:
+                version_float = float(re.sub(r'[^0-9.]', '', str(version)))
+                MODEL_ACTIVE_VERSION.set(version_float)
+            except ValueError:
+                MODEL_ACTIVE_VERSION.set(0)
+            
+            run_id = self._get_production_model_run_id()
+            if run_id:
+                run = client.get_run(run_id)
+                auc = run.data.metrics.get('auc', run.data.metrics.get('roc_auc', run.data.metrics.get('AUC', 0)))
+                MODEL_AUC_SCORE.set(auc)
+            
             tmp_dir = tempfile.mkdtemp()
-            artifact_path = client.download_artifacts(latest[0].run_id, COLUMNS_FILE, tmp_dir)
+            artifact_path = client.download_artifacts(run_id, COLUMNS_FILE, tmp_dir)
             self._columns = joblib.load(artifact_path)
             logger.info(f"Loaded {len(self._columns)} feature columns for inference, model version: {self._model_version}")
         except Exception as e:
@@ -90,12 +147,25 @@ class PredictionService:
 
     def _request_to_dataframe(self, request: PredictionRequest) -> pd.DataFrame:
         data = {
+            "gender": request.gender,
+            "SeniorCitizen": request.SeniorCitizen,
+            "Partner": request.Partner,
+            "Dependents": request.Dependents,
             "tenure": request.tenure,
+            "PhoneService": request.PhoneService,
+            "MultipleLines": request.MultipleLines,
+            "InternetService": request.InternetService,
+            "OnlineSecurity": request.OnlineSecurity,
+            "OnlineBackup": request.OnlineBackup,
+            "DeviceProtection": request.DeviceProtection,
+            "TechSupport": request.TechSupport,
+            "StreamingTV": request.StreamingTV,
+            "StreamingMovies": request.StreamingMovies,
+            "Contract": request.Contract,
+            "PaperlessBilling": request.PaperlessBilling,
+            "PaymentMethod": request.PaymentMethod,
             "MonthlyCharges": request.MonthlyCharges,
             "TotalCharges": request.TotalCharges,
-            "Contract": request.Contract,
-            "InternetService": request.InternetService,
-            "PaymentMethod": request.PaymentMethod,
         }
         return pd.DataFrame([data])
 

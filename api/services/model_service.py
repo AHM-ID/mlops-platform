@@ -1,3 +1,4 @@
+# api/services/model_service.py
 """
 Model Service
 Business logic for model management and deployment
@@ -46,7 +47,7 @@ class ModelService:
             all_versions.sort(key=lambda x: int(x.version), reverse=True)
 
             logger.info(
-                f"Current models → Production: v{production_model.version if production_model else None}, "
+                f"Current models -> Production: v{production_model.version if production_model else None}, "
                 f"Total versions: {len(all_versions)}"
             )
             
