@@ -3,11 +3,11 @@ stages:
   - build
 
 variables:
-  DOCKER_REGISTRY: docker.arvancloud.ir
-  PIP_INDEX_URL: https://pypi.devneeds.ir/simple/
-  PIP_TRUSTED_HOST: pypi.devneeds.ir
-  APT_MIRROR: http://linux-mirror.liara.ir/repository/debian
-  APT_MIRROR_SECURITY: http://linux-mirror.liara.ir/repository/debian-security
+  DOCKER_REGISTRY: docker.io
+  PIP_INDEX_URL: "https://pypi.org/simple/"
+  PIP_TRUSTED_HOST: "pypi.org"
+  APT_MIRROR: "http://deb.debian.org/debian"
+  APT_MIRROR_SECURITY: "http://security.debian.org/debian-security"
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   TESTING: "true"
@@ -17,7 +17,7 @@ test:
   image: ${DOCKER_REGISTRY}/python:3.11.9-slim
   timeout: 45m
   cache:
-    key: pip-py311-devneeds
+    key: pip-py311
     paths:
       - .cache/pip
   rules:
@@ -32,25 +32,35 @@ test:
 
 build:
   stage: build
-  image: ${DOCKER_REGISTRY}/docker:24
-  services:
-    - docker:24-dind
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
   before_script:
-    - cat ${HARBOR_PASSWORD} | docker login ${HARBOR_REGISTRY} -u ${HARBOR_USERNAME} --password-stdin
+    - mkdir -p /kaniko/.docker
+    - |
+      cat > /kaniko/.docker/config.json << EOF
+      {
+        "auths": {
+          "${HARBOR_REGISTRY}": {
+            "username": "${HARBOR_USERNAME}",
+            "password": "${HARBOR_PASSWORD}"
+          }
+        }
+      }
+      EOF
   script:
     - |
-      docker build \
+      /kaniko/executor \
+        --context ${CI_PROJECT_DIR} \
+        --dockerfile ${CI_PROJECT_DIR}/Dockerfile \
+        --destination ${HARBOR_IMAGE}:${CI_COMMIT_SHORT_SHA} \
+        --destination ${HARBOR_IMAGE}:latest \
         --build-arg DOCKER_REGISTRY=${DOCKER_REGISTRY} \
         --build-arg PIP_INDEX_URL=${PIP_INDEX_URL} \
         --build-arg PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
         --build-arg APT_MIRROR=${APT_MIRROR} \
         --build-arg APT_MIRROR_SECURITY=${APT_MIRROR_SECURITY} \
-        -t ${HARBOR_IMAGE}:${CI_COMMIT_SHORT_SHA} \
-        -t ${HARBOR_IMAGE}:latest \
-        .
-    - docker push ${HARBOR_IMAGE}:${CI_COMMIT_SHORT_SHA}
-    - docker push ${HARBOR_IMAGE}:latest
+        --cache=true \
+        --cache-repo=${HARBOR_REGISTRY}/${HARBOR_IMAGE}/cache

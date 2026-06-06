@@ -1,6 +1,6 @@
 #!/bin/sh
-# GitLab CI: staged pip install via devneeds PyPI mirror.
-# https://pypi.devneeds.ir/simple/
+# GitLab CI: staged pip install via PyPI mirror.
+# https://pypi.org/simple/
 set -eu
 
 unset PIP_INDEX_URL PIP_TRUSTED_HOST PIP_EXTRA_INDEX_URL || true
@@ -9,8 +9,8 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_PROGRESS_BAR=on
 export PIP_DEFAULT_TIMEOUT=300
 
-INDEX="${PIP_INDEX_URL:-https://pypi.devneeds.ir/simple/}"
-TRUSTED="${PIP_TRUSTED_HOST:-pypi.devneeds.ir}"
+INDEX="${PIP_INDEX_URL:-https://pypi.org/simple/}"
+TRUSTED="${PIP_TRUSTED_HOST:-pypi.org}"
 
 log() { echo ""; echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
 
