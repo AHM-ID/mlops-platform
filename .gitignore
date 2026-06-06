@@ -34,3 +34,6 @@ data/*
 
 # Env
 .env
+
+# Temp Doc File
+code-doc.txt

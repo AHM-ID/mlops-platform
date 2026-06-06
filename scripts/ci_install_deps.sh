@@ -9,8 +9,8 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_PROGRESS_BAR=on
 export PIP_DEFAULT_TIMEOUT=300
 
-INDEX="${CI_PIP_INDEX:-https://pypi.devneeds.ir/simple/}"
-TRUSTED="${CI_PIP_TRUSTED:-pypi.devneeds.ir}"
+INDEX="${PIP_INDEX_URL:-https://pypi.devneeds.ir/simple/}"
+TRUSTED="${PIP_TRUSTED_HOST:-pypi.devneeds.ir}"
 
 log() { echo ""; echo "=== [$(date -u +%H:%M:%S)] $* ==="; }
 
