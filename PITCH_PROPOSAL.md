@@ -41,7 +41,7 @@
 
 ---
 
-## ۲. جلوگیری از ریزش مشتری چیست؟ (Customer Churn Prevention – توضیح بسیار کامل)
+## ۲. جلوگیری از ریزش مشتری چیست؟ (Customer Churn Prevention)
 
 ریزش مشتری (Customer Churn) پدیده‌ای است که در آن مشتریان فعلی تصمیم به قطع همکاری با شرکت می‌گیرند. این پدیده می‌تواند voluntary (تصمیم آگاهانه مشتری) یا involuntary (به دلیل مشکلات شرکت مانند قطع خدمات) باشد.
 
@@ -151,9 +151,7 @@
 
 **چرا این جریان بهتر از MLOps سنتی است؟**
 - Traditional: مدل static، drift undetected، retrain manual و پرهزینه.
-- ما: closed-loop کامل، auto-detection، version-aware components، low latency، high reliability.
-
-ادامه با بخش‌های نوآوری، معماری، مالی و مطالعات موردی در فایل کامل...
+- ما: closed-loop، auto-detection، version-aware components، low latency، high reliability.
 
 ## ۴. نوآوری‌های کلیدی پلتفرم (با جزئیات فنی عمیق)
 
@@ -178,10 +176,6 @@
 - قبل از promote به Production: مقایسه AUC, Accuracy, F1
 - ارتقا فقط اگر بهتر یا برابر در حداقل یک متریک
 - جلوگیری از downgrade کیفیت مدل
-
-**نوآوری ۴ و ۵:** صف غیرمزاحم و observability یکپارچه (جزئیات کامل...)
-
-(هر نوآوری با ۵۰-۱۰۰ خط توضیح، مقایسه، pseudocode و فواید بیزینسی گسترش یافته...)
 
 ## ۵.۱.۲ معماری توزیع‌شده (Deployment روی چندین سرور)
 
@@ -376,10 +370,7 @@ T-Mobile با پیاده‌سازی پلتفرم MLOps مبتنی بر AWS SageM
 - ROI: ۸۰۰ تا ۱۵۰۰ درصد در ۱۲-۱۸ ماه
 - زمان بازگشت سرمایه: ۲ تا ۶ ماه
 
-## ۸. نقشه راه، نتیجه‌گیری، پیوست‌ها (SRS کامل و README)
-
-**فایل کامل بیش از ۸۰۰ خط است و تمام جزئیات پوشش داده شده.**
-
+## ۸. نقشه راه، نتیجه‌گیری، پیوست‌ها (SRS و README)
 
 - FastAPI برای inference
 - Celery برای وظایف async
