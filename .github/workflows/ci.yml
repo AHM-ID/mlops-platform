@@ -5,15 +5,19 @@ on:
     branches:
       - main
       - "feature/**"
+      - "dev/**"
     paths:
       - "api/**"
       - "shared/**"
       - "trainer/**"
       - "worker/**"
       - "tests/**"
+      - "scripts/**"
+      - "infra/**"
       - "requirements.txt"
       - "Dockerfile"
-      - "scripts/**"
+      - "docker-compose.yml"
+      - "pytest.ini"
   pull_request:
     branches:
       - main
@@ -23,9 +27,12 @@ on:
       - "trainer/**"
       - "worker/**"
       - "tests/**"
+      - "scripts/**"
+      - "infra/**"
       - "requirements.txt"
       - "Dockerfile"
-      - "scripts/**"
+      - "docker-compose.yml"
+      - "pytest.ini"
   workflow_dispatch:
 
 env:
