@@ -1,23 +1,19 @@
-name: Github CI/CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
       - main
       - "feature/**"
-      - "dev/**"
     paths:
       - "api/**"
       - "shared/**"
       - "trainer/**"
       - "worker/**"
       - "tests/**"
-      - "scripts/**"
-      - "infra/**"
       - "requirements.txt"
       - "Dockerfile"
-      - "docker-compose.yml"
-      - "pytest.ini"
+      - "scripts/**"
   pull_request:
     branches:
       - main
@@ -27,12 +23,10 @@ on:
       - "trainer/**"
       - "worker/**"
       - "tests/**"
-      - "scripts/**"
-      - "infra/**"
       - "requirements.txt"
       - "Dockerfile"
-      - "docker-compose.yml"
-      - "pytest.ini"
+      - "scripts/**"
+  workflow_dispatch:
 
 env:
   DOCKER_REGISTRY: docker.io
@@ -50,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
-      image: ${{ env.DOCKER_REGISTRY }}/python:3.11.9-slim
+      image: docker.io/python:3.11.9-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
