@@ -10,7 +10,7 @@
 6. [API Reference](#api-reference)
 7. [Using the Platform](#using-the-platform)
 8. [Monitoring and Observability](#monitoring-and-observability)
-9.  [Testing](#testing)
+9. [Testing](#testing)
 10. [Development Guide](#development-guide)
 
 ---
@@ -74,8 +74,9 @@ This layer handles all data input sources including initial CSV training data, h
 ![Data Ingestion & Retrain Queue Layer](./assets/diagrams/1-data-ingestion-layer.svg)
 
 **Key Components:**
-- `POST /collect-training-data` - Direct ingestion of labeled historical data
-- `POST /feedback/{prediction_id}` - User feedback for past predictions
+
+- `POST /api/feedback/train-data` - Direct ingestion of labeled historical data
+- `POST /api/feedback/{prediction_id}` - User feedback for past predictions
 - Redis Retrain Queue (`retrain:training_data`) - Persistent queue for accumulating training data
 
 ---
@@ -87,6 +88,7 @@ This layer contains the complete training pipeline including hyperparameter opti
 ![Training & Model Registry Layer](./assets/diagrams/2-training-registry-layer.svg)
 
 **Key Components:**
+
 - Optuna Search - 15 trials with 5-fold cross validation
 - Random Forest Training - With optimized hyperparameters
 - Model Comparison - AUC, Accuracy, F1 comparison before promotion
@@ -104,6 +106,7 @@ This layer provides real-time and batch prediction capabilities. The FastAPI ser
 ![Inference Serving Layer](./assets/diagrams/3-inference-serving-layer.svg)
 
 **Key Components:**
+
 - Nginx Reverse Proxy - Path-based routing on port 8080
 - FastAPI - Main inference service on port 8000
 - API Key Authentication - Three roles (admin, user, readonly)
@@ -121,12 +124,13 @@ This layer manages all asynchronous tasks including batch predictions, model ret
 ![Async Processing & Observability Layer](./assets/diagrams/4-async-observability-layer.svg)
 
 **Key Components:**
+
 - Celery Beat - Scheduled task trigger (hourly drift, daily expiry)
 - Celery Worker - Executes async tasks
 - batch_predict - Asynchronous batch predictions
 - retrain - Full training pipeline execution
 - periodic_drift_check - Hourly drift detection using Evidently
-- expire_old_pending - Cleanup of records older than 30 days
+- expire_old_pending_records - Cleanup of records older than 30 days
 - Prometheus - Metrics collection and querying on port 9090
 - Loki - Log aggregation and storage on port 3100
 - Grafana - Dashboards on port 3000 (API Performance, Model Performance, System Health, Log Explorer)
@@ -155,7 +159,7 @@ This layer manages all asynchronous tasks including batch predictions, model ret
 
 ### Retraining Flow
 
-1. Manual trigger via `POST /api/retrain` or automatic after drift (optional).
+1. Manual trigger via `POST /api/models/retrain` or automatic after drift (optional).
 2. Celery task `retrain` loads labelled data from Redis retrain queue (fallback to CSV).
 3. Hyperparameter search with Optuna, model training, evaluation.
 4. New model registered in MLflow.
@@ -184,6 +188,7 @@ nano .env
 ```
 
 At minimum, review and set:
+
 - API keys (`API_KEY_ADMIN`, `API_KEY_USER`, `API_KEY_READONLY`).
 - Database passwords (`POSTGRES_PASSWORD`).
 - Grafana admin password (`GRAFANA_ADMIN_PASSWORD`).
@@ -197,6 +202,7 @@ make up           # Start all services
 ```
 
 The first startup will:
+
 - Initialize PostgreSQL, Redis, and Garage.
 - Run the initial model training from `data/churn.csv`.
 - Start API, worker, Prometheus, Loki, Fluent‑bit, Grafana, and Nginx.
@@ -298,56 +304,56 @@ All configuration is done through the `.env` file. Below are the most important 
 ### Authentication Header
 
 All protected endpoints require:
+
 ```
 X-API-Key: admin-secret-key-change-in-production
 ```
 
 ### Endpoint Summary
 
-| Method               | Endpoint                                                  | Permission | Description                                  |
-| -------------------- | --------------------------------------------------------- | ---------- | -------------------------------------------- |
-| **Predictions**      |                                                           |            |                                              |
-| POST                 | `/api/predictions/single`                                 | read       | Single real‑time prediction                  |
-| POST                 | `/api/predictions/batch`                                  | write      | Async batch prediction                       |
-| GET                  | `/api/predictions/batch/{batch_id}/status`                | read       | Batch job status                             |
-| GET                  | `/api/predictions/batch/{batch_id}/results`               | read       | Batch results                                |
-| **Feedback**         |                                                           |            |                                              |
-| POST                 | `/api/feedback/{prediction_id}`                           | write      | Submit actual label for a past prediction    |
-| POST                 | `/api/predictions/collect-training-data?actual_churn=0/1` | write      | Directly add labelled training data          |
-| **Model Management** |                                                           |            |                                              |
-| GET                  | `/api/models/current`                                     | read       | Get production and staging models            |
-| GET                  | `/api/models/{model_name}`                                | read       | Get model details                            |
-| GET                  | `/api/models/{model_name}/versions`                       | read       | List all versions                            |
-| POST                 | `/api/models/deploy`                                      | admin      | Promote model to Staging/Production          |
-| GET                  | `/api/models/health/model-version`                        | read       | Get current production version               |
-| **Retraining**       |                                                           |            |                                              |
-| POST                 | `/api/retrain`                                            | retrain    | Trigger async retraining                     |
-| GET                  | `/api/retrain/{task_id}/status`                           | read       | Get retraining task status                   |
-| GET                  | `/api/retrain-queue/status`                               | -          | Get number of pending records                |
-| **Drift Detection**  |                                                           |            |                                              |
-| POST                 | `/api/monitoring/drift/check`                             | read       | Manual drift check on provided data          |
-| POST                 | `/api/monitoring/drift/auto-check`                        | read       | Trigger auto drift check from Redis          |
-| GET                  | `/api/monitoring/drift/status`                            | read       | Recent drift check results                   |
-| **Batch Jobs**       |                                                           |            |                                              |
-| GET                  | `/api/batch/jobs`                                         | read       | List recent batch jobs                       |
-| GET                  | `/api/batch/{batch_id}/summary`                           | read       | Summary statistics of a batch                |
-| DELETE               | `/api/batch/{batch_id}`                                   | write      | Delete batch job                             |
-| **Monitoring**       |                                                           |            |                                              |
-| GET                  | `/api/monitoring/metrics/prometheus`                      | -          | Prometheus metrics endpoint                  |
-| GET                  | `/api/monitoring/metrics`                                 | -          | API metrics summary                          |
-| GET                  | `/api/monitoring/health/system`                           | -          | System health (CPU, RAM, disk, dependencies) |
-| GET                  | `/api/monitoring/prediction-stats`                        | read       | Real‑time prediction statistics              |
-| DELETE               | `/api/monitoring/cache`                                   | admin      | Clear feature cache                          |
-| **Health**           |                                                           |            |                                              |
-| GET                  | `/health`                                                 | -          | Quick health check                           |
-| GET                  | `/`                                                       | -          | API information                              |
+| Method               | Endpoint                                  | Permission | Description                                  |
+| -------------------- | ----------------------------------------- | ---------- | -------------------------------------------- |
+| **Predictions**      |                                           |            |                                              |
+| POST                 | `/api/inference/single`                   | read       | Single real‑time prediction                  |
+| POST                 | `/api/inference/batch`                    | write      | Async batch prediction                       |
+| GET                  | `/api/inference/batch/{batch_id}/status`  | read       | Batch job status                             |
+| GET                  | `/api/inference/batch/{batch_id}/results` | read       | Batch results                                |
+| **Feedback**         |                                           |            |                                              |
+| POST                 | `/api/feedback/{prediction_id}`           | write      | Submit actual label for a past prediction    |
+| POST                 | `/api/feedback/train-data`                | write      | Directly add labelled training data          |
+| **Model Management** |                                           |            |                                              |
+| GET                  | `/api/models/current`                     | read       | Get production and staging models            |
+| GET                  | `/api/models/{model_name}`                | read       | Get model details                            |
+| GET                  | `/api/models/{model_name}/versions`       | read       | List all versions                            |
+| POST                 | `/api/models/deploy`                      | admin      | Promote model to Staging/Production          |
+| GET                  | `/api/models/health/model-version`        | read       | Get current production version               |
+| **Retraining**       |                                           |            |                                              |
+| POST                 | `/api/models/retrain`                     | retrain    | Trigger async retraining                     |
+| GET                  | `/api/models/retrain/{task_id}/status`    | read       | Get retraining task status                   |
+| GET                  | `/api/retrain-queue/status`               | -          | Get number of pending records                |
+| **Drift Detection**  |                                           |            |                                              |
+| POST                 | `/api/drift/check`                        | read       | Manual drift check on provided data          |
+| POST                 | `/api/drift/auto-check`                   | read       | Trigger auto drift check from Redis          |
+| GET                  | `/api/drift/status`                       | read       | Recent drift check results                   |
+| **Batch Jobs**       |                                           |            |                                              |
+| GET                  | `/api/inference/batches`                  | read       | List recent batch jobs                       |
+| GET                  | `/api/inference/batch/{batch_id}/summary` | read       | Summary statistics of a batch                |
+| DELETE               | `/api/inference/batch/{batch_id}`         | write      | Delete batch job                             |
+| **Monitoring**       |                                           |            |                                              |
+| GET                  | `/api/monitoring/metrics`                 | -          | Prometheus metrics endpoint                  |
+| GET                  | `/api/monitoring/health/system`           | -          | System health (CPU, RAM, disk, dependencies) |
+| GET                  | `/api/monitoring/prediction-stats`        | read       | Real‑time prediction statistics              |
+| DELETE               | `/api/monitoring/cache`                   | admin      | Clear feature cache                          |
+| **Health**           |                                           |            |                                              |
+| GET                  | `/health`                                 | -          | Quick health check                           |
+| GET                  | `/`                                       | -          | API information                              |
 
 ### Detailed Examples
 
 #### Single Prediction
 
 ```bash
-curl -X POST http://localhost:8080/api/predictions/single \
+curl -X POST http://localhost:8080/api/inference/single \
   -H "X-API-Key: user-secret-key-change-in-production" \
   -H "Content-Type: application/json" \
   -d '{
@@ -362,6 +368,7 @@ curl -X POST http://localhost:8080/api/predictions/single \
 ```
 
 Response:
+
 ```json
 {
   "customer_id": "CUST001",
@@ -376,16 +383,17 @@ Response:
 #### Batch Prediction
 
 ```bash
-curl -X POST http://localhost:8080/api/predictions/batch \
+curl -X POST http://localhost:8080/api/inference/batch \
   -H "X-API-Key: admin-secret-key-change-in-production" \
   -H "Content-Type: application/json" \
   -d '{
     "batch_name": "Monthly_Check",
-    "data": [ { "customer_id": "CUST001", "tenure": 24, ... } ]
+    "data": [ { "customer_id": "CUST001", "tenure": 24, "MonthlyCharges": 75.5, "TotalCharges": 1814.0, "Contract": "Two year", "InternetService": "Fiber optic", "PaymentMethod": "Electronic check" } ]
   }'
 ```
 
 Response:
+
 ```json
 {
   "batch_id": "batch_20260516_abc123",
@@ -406,6 +414,7 @@ curl -X POST http://localhost:8080/api/feedback/abc-123-def \
 ```
 
 Response:
+
 ```json
 {
   "status": "success",
@@ -415,30 +424,54 @@ Response:
 }
 ```
 
+#### Direct Training Data Ingestion
+
+```bash
+curl -X POST http://localhost:8080/api/feedback/train-data \
+  -H "X-API-Key: user-secret-key-change-in-production" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "features": {"tenure": 12, "MonthlyCharges": 50.5, "TotalCharges": 606.0, "Contract": "Month-to-month", "InternetService": "DSL", "PaymentMethod": "Electronic check"},
+    "actual_label": 1,
+    "customer_id": "HIST001"
+  }'
+```
+
+Response:
+
+```json
+{
+  "status": "success",
+  "message": "Training data collected"
+}
+```
+
 #### Trigger Retraining
 
 ```bash
-curl -X POST http://localhost:8080/api/retrain \
+curl -X POST http://localhost:8080/api/models/retrain \
   -H "X-API-Key: admin-secret-key-change-in-production"
 ```
 
 Response:
+
 ```json
 {
   "task_id": "retrain-123",
   "status": "submitted",
-  "message": "Retraining task has been submitted. Check logs for progress."
+  "message": "Retraining task submitted"
 }
 ```
 
 #### Trigger Automatic Drift Check
 
 ```bash
-curl -X POST http://localhost:8080/api/monitoring/drift/auto-check \
+curl -X POST http://localhost:8080/api/drift/auto-check \
   -H "X-API-Key: admin-secret-key-change-in-production"
 ```
 
 Response:
+
 ```json
 {
   "task_id": "drift-456",
@@ -450,11 +483,12 @@ Response:
 #### Get Batch Summary
 
 ```bash
-curl "http://localhost:8080/api/batch/batch_20260516_abc123/summary" \
+curl "http://localhost:8080/api/inference/batch/batch_20260516_abc123/summary" \
   -H "X-API-Key: readonly-secret-key-change-in-production"
 ```
 
 Response:
+
 ```json
 {
   "batch_id": "batch_20260516_abc123",
@@ -475,7 +509,7 @@ Response:
 The platform automatically trains the first model from `data/churn.csv` during `make up`. You can retrain manually at any time:
 
 ```bash
-curl -X POST http://localhost:8080/api/retrain -H "X-API-Key: admin-..."
+curl -X POST http://localhost:8080/api/models/retrain -H "X-API-Key: admin-secret-key-change-in-production"
 ```
 
 ### Collecting Training Data
@@ -483,24 +517,24 @@ curl -X POST http://localhost:8080/api/retrain -H "X-API-Key: admin-..."
 You have two ways to add labelled data for future retraining:
 
 1. **Via prediction feedback** – After a prediction, submit the actual outcome:
+
    ```bash
-   curl -X POST http://localhost:8080/api/feedback/{prediction_id} -d '{"actual_label": 1}'
+   curl -X POST http://localhost:8080/api/feedback/{prediction_id} -H "X-API-Key: user-secret-key-change-in-production" -H "Content-Type: application/json" -d '{"actual_label": 1}'
    ```
 
 2. **Direct ingestion** – Add historical labelled data without a prior prediction:
    ```bash
-   curl -X POST "http://localhost:8080/api/predictions/collect-training-data?actual_churn=1" \
-     -H "X-API-Key: user-..." -H "Content-Type: application/json" \
-     -d '{"customer_id":"HIST001","tenure":36,"MonthlyCharges":89.5,"TotalCharges":3222.0,"Contract":"Two year","InternetService":"Fiber optic","PaymentMethod":"Electronic check"}'
+   curl -X POST http://localhost:8080/api/feedback/train-data -H "X-API-Key: user-secret-key-change-in-production" -H "Content-Type: application/json" -d '{"features": {"tenure": 36, "MonthlyCharges": 89.5, "TotalCharges": 3222.0, "Contract": "Two year", "InternetService": "Fiber optic", "PaymentMethod": "Electronic check"}, "actual_label": 1, "customer_id": "HIST001"}'
    ```
 
 ### Monitoring the Retrain Queue
 
 ```bash
-curl http://localhost:8080/api/retrain-queue/status
+curl http://localhost:8080/api/retrain-queue/status -H "X-API-Key: readonly-secret-key-change-in-production"
 ```
 
 Response:
+
 ```json
 {
   "queue_length": 1250,
@@ -514,12 +548,13 @@ Response:
 The system runs automatic drift detection every hour using recent predictions from Redis. You can also manually trigger it:
 
 ```bash
-curl -X POST http://localhost:8080/api/monitoring/drift/auto-check -H "X-API-Key: admin-..."
+curl -X POST http://localhost:8080/api/drift/auto-check -H "X-API-Key: admin-secret-key-change-in-production"
 ```
 
 Check the status of the drift task:
+
 ```bash
-curl "http://localhost:8080/api/retrain/{task_id}/status" -H "X-API-Key: admin-..."
+curl "http://localhost:8080/api/models/retrain/{task_id}/status" -H "X-API-Key: admin-secret-key-change-in-production"
 ```
 
 View past drift reports in the MLflow UI under the experiment `customer_churn` (runs named `auto_drift_check`).
@@ -527,14 +562,16 @@ View past drift reports in the MLflow UI under the experiment `customer_churn` (
 ### Model Management
 
 List current models:
+
 ```bash
-curl http://localhost:8080/api/models/current -H "X-API-Key: readonly-..."
+curl http://localhost:8080/api/models/current -H "X-API-Key: readonly-secret-key-change-in-production"
 ```
 
 Promote a specific model version to Production:
+
 ```bash
 curl -X POST http://localhost:8080/api/models/deploy \
-  -H "X-API-Key: admin-..." \
+  -H "X-API-Key: admin-secret-key-change-in-production" \
   -H "Content-Type: application/json" \
   -d '{"model_name":"churn_model","version":"4","target_stage":"Production"}'
 ```
@@ -556,7 +593,7 @@ The following dashboards are automatically provisioned:
 
 ### Prometheus Metrics
 
-Prometheus scrapes the API endpoint `/api/monitoring/metrics/prometheus` every 15 seconds. Key metrics:
+Prometheus scrapes the API endpoint `/api/monitoring/metrics` every 15 seconds. Key metrics:
 
 | Metric                         | Type      | Labels                         |
 | ------------------------------ | --------- | ------------------------------ |
@@ -575,6 +612,7 @@ Prometheus scrapes the API endpoint `/api/monitoring/metrics/prometheus` every 1
 | `process_memory_usage_percent` | Gauge     | –                              |
 
 Query examples:
+
 ```bash
 # Total requests in the last 5 minutes
 curl "http://localhost:8080/prometheus/api/v1/query?query=increase(api_requests_total[5m])"
@@ -647,6 +685,7 @@ pytest tests/test_auth.py -v
 Tests marked `integration` need live services. They are excluded by default (`pytest.ini` uses `-m "not integration"`).
 
 The unit test suite covers:
+
 - Data quality and feature store
 - Authentication, rate limiting, and Pydantic schemas
 - Prediction, batch, and model services
@@ -666,6 +705,7 @@ docker-compose logs -f     # Follow all logs
 ### Resetting the Platform
 
 To completely reset (delete all data):
+
 ```bash
 make down-v
 make up
